@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+# Never commit session material
+auth.json
+cookies.json
+browser-profile/
