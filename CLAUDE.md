@@ -17,7 +17,7 @@ Common mistakes and confusion points in this project. Add to this list when some
   - `codeBlockMetadata.lang` with `mode: "AUTO"` is Medium's guess and is often wrong (`ini` for Python). Only trust it when the author picked it.
   - Markup ranges often include surrounding spaces, which breaks Markdown emphasis. `format.ts` trims them and keeps whitespace outside the markers.
   - Consecutive `PRE` paragraphs are one code block.
-- **Publication posts:** `Collection.latestPostsConnection` **ignores every paging argument** (always the same first page, `next.from: null`). Use `homepagePostsConnection`, which pages with `from: "L<timestamp>"`. That one puts pinned posts first. The user equivalent is `User.homepagePostsConnection`.
+- **Publication posts:** `Collection.latestPostsConnection` **ignores every paging argument** (always the same first page, `next.from: null`). Use `homepagePostsConnection` (the user equivalent is `User.homepagePostsConnection`). **Without a cursor it returns pinned posts first**, paged with `from: "P<timestamp>"`, and only then the rest newest first with `from: "L<timestamp>"`. A publication with several pins (Towards AI has 4+) looks months stale. Start at `from: "L<now>"` to skip the pins; authors pin too. Found 2026-09-25 by testing through the MCP tools, not the unit tests.
 - Paging objects (`PagingOptions`) reject `null`s, and the feed's `next.source` is often `""`. `cleanPaging` drops both.
 - `followingCollectionConnection` (publications the user follows) has no paging and returns everything at once (over 150 items on a test account). `followingUserConnection` pages with `from`.
 - Some IDs are typed `ID!`, not `String!`, even when they look like strings (`collectionByDomainOrSlug(domainOrSlug:)`, `catalogById(catalogId:)`). The wrong type is a validation error, not a coercion.
@@ -33,6 +33,7 @@ Common mistakes and confusion points in this project. Add to this list when some
   - Every write in `api.ts` re-reads state afterwards, because the mutation's echo isn't proof. Keep it that way.
 - Post IDs are 8–12 hex characters at the end of every post URL, including custom domains (`pub.towardsai.net/<slug>-<id>`). GraphQL on medium.com serves any post by id, so custom domains need no cookie handoff (unlike Substack).
 - `<name>.medium.com` can be a user *or* a publication. `resolveAccount` tries user first, then publication.
+- A bare word is tried as a publication slug and a username. For account changes (`strict`), a hit only counts if its display name matches what was asked; otherwise it joins the ambiguity list. Before this, `follow("sam")` followed `medium.com/sam` ("Sam blog :]").
 
 ## Testing against a real account
 

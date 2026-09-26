@@ -40,6 +40,21 @@ describe("parseAccountRef", () => {
   });
 });
 
+describe("recentPosts", () => {
+  it("starts past pinned posts", async () => {
+    const { client: c, requests } = client({
+      User: { data: { userResult: { __typename: "User", id: "k1", name: "Kay", username: "kay" } } },
+      UserPosts: { data: { userResult: { homepagePostsConnection: { posts: [rawPost("aaaaaaaaaaaa")], pagingInfo: { next: { from: "L1", limit: 1 } } } } } },
+    });
+    const before = Date.now();
+    const r = await c.recentPosts("@kay", { limit: 1 });
+    const from = (requests.find((q) => q.operationName === "UserPosts")!.variables.paging as { from: string }).from;
+    expect(from).toMatch(/^L\d+$/);
+    expect(Number(from.slice(1))).toBeGreaterThanOrEqual(before);
+    expect(r.nextCursor).toBeTruthy();
+  });
+});
+
 describe("whoami", () => {
   it("treats a logged-out viewer as an expired session", async () => {
     // What Medium does when only `sid` is sent, or the cookies are stale.
@@ -201,6 +216,33 @@ describe("account changes", () => {
     expect(err.message).toMatch(/ambiguous/);
     expect(err.message).toContain("@samlee");
     expect(err.message).toContain("sams-notes");
+  });
+
+  it("doesn't follow a slug match whose name differs from what was asked", async () => {
+    const { client: c, requests } = client({
+      Publication: { data: { collectionByDomainOrSlug: { id: "c9", name: "Sam blog :]", slug: "sam", viewerEdge: { isFollowing: false } } } },
+      User: { data: { userResult: null } },
+      SearchAccounts: { data: { search: { people: { items: [{ id: "u1", name: "Sam Lee", username: "samlee" }] }, collections: { items: [] } } } },
+    });
+    const err = await c.follow("sam", true).catch((e: unknown) => e as Error);
+    expect(err.message).toMatch(/ambiguous/);
+    expect(err.message).toContain("Sam blog :]");
+    expect(err.message).toContain("@samlee");
+    expect(requests.some((r) => r.operationName === "FollowCollection")).toBe(false);
+    // Reads still take the convenient shortcut.
+    expect((await c.resolveAccount("sam")).name).toBe("Sam blog :]");
+  });
+
+  it("follows a bare slug when the name matches", async () => {
+    let following = false;
+    const { client: c } = client({
+      Publication: () => ({ data: { collectionByDomainOrSlug: { id: "c1", name: "Javarevisited", slug: "javarevisited", viewerEdge: { isFollowing: following } } } }),
+      FollowCollection: () => {
+        following = true;
+        return { data: { followCollection: { id: "c1" } } };
+      },
+    });
+    expect(await c.follow("javarevisited", true)).toMatchObject({ changed: true, following: true });
   });
 
   it("removes every copy of a post from the reading list", async () => {

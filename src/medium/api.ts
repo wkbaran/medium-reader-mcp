@@ -386,7 +386,9 @@ export class MediumClient {
   /** Latest posts from an author or a publication. */
   async recentPosts(ref: string, opts: { limit?: number; cursor?: string } = {}): Promise<Page<PostSummary> & { source: Account }> {
     const account = await this.resolveAccount(ref);
-    const paging = decodeCursor<Record<string, unknown>>(opts.cursor) ?? {};
+    // homepagePostsConnection lists pinned posts first ("P…" cursors), then the
+    // rest newest first ("L<timestamp>" cursors). Starting at L<now> skips the pins.
+    const paging = decodeCursor<Record<string, unknown>>(opts.cursor) ?? { from: `L${Date.now()}` };
     const vars = { paging: cleanPaging({ ...paging, limit: opts.limit ?? 10 }) };
     type Conn = { posts: RawPost[]; pagingInfo?: { next?: Record<string, unknown> | null } | null } | null;
     let conn: Conn;
@@ -655,12 +657,19 @@ export class MediumClient {
       // "<name>.medium.com" can be a user or a publication subdomain.
       if (!parsed.slug) throw new MediumError(`No Medium user @${parsed.username}.`, 404);
     }
+    // A bare word ("javarevisited", "sam") might be a slug, a username, or just
+    // part of a name. For reads, the first slug/username hit is fine. For
+    // account changes it has to actually be named that, or it joins the
+    // candidates below: "sam" once followed the publication at medium.com/sam,
+    // "Sam blog :]".
+    const direct: Array<Account & { isFollowing?: boolean }> = [];
     if (parsed.slug) {
       const p = await this.publicationBySlug(parsed.slug);
-      if (p) return p;
+      if (p && (parsed.explicit || !opts.strict || sameName(p.name, r))) return p;
       if (parsed.explicit) throw new MediumError(`No Medium publication or user found at ${ref}.`, 404);
       const u = await this.userByUsername(parsed.slug);
-      if (u) return u;
+      if (u && (!opts.strict || sameName(u.name, r))) return u;
+      direct.push(...[p, u].filter((a) => a !== null));
     }
 
     // Plain name: search both people and publications.
@@ -670,11 +679,12 @@ export class MediumClient {
         collections?: { items?: Array<{ id: string; name?: string; slug?: string; domain?: string | null; description?: string | null }> } | null;
       } | null;
     }>(Q.searchAccounts, { query: r, paging: { limit: 5, page: 0 } });
-    const candidates = [
+    const candidates = dedupeAccounts([
+      ...direct.map(stripState),
       ...(data.search?.collections?.items ?? []).map(publicationAccount),
       ...(data.search?.people?.items ?? []).filter((u) => u.id).map((u) => userAccount(u as { id: string })),
-    ];
-    const exact = candidates.filter((c) => c.name?.toLowerCase() === r.toLowerCase());
+    ]);
+    const exact = candidates.filter((c) => sameName(c.name, r));
     const pick = exact.length === 1 ? exact[0] : !opts.strict && candidates.length ? (exact[0] ?? candidates[0]) : undefined;
     if (pick) {
       return pick.kind === "user" ? ((await this.userByUsername(pick.username!)) ?? pick) : ((await this.publicationBySlug(pick.slug ?? pick.id)) ?? pick);
@@ -790,6 +800,15 @@ function publicationAccount(c: { id: string; name?: string | null; slug?: string
     url: c.domain ? `https://${c.domain}` : `https://medium.com/${c.slug ?? c.id}`,
     description: c.description || undefined,
   };
+}
+
+function sameName(name: string | undefined, ref: string): boolean {
+  return Boolean(name) && name!.trim().toLowerCase() === ref.trim().toLowerCase();
+}
+
+function dedupeAccounts(accounts: Account[]): Account[] {
+  const seen = new Set<string>();
+  return accounts.filter((a) => !seen.has(a.kind + a.id) && Boolean(seen.add(a.kind + a.id)));
 }
 
 function stripState<T extends { isFollowing?: boolean }>(a: T): Omit<T, "isFollowing"> {
