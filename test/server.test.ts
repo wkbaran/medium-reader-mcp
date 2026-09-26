@@ -58,15 +58,17 @@ describe("MCP server", () => {
       "get_recent_posts",
       "list_following",
       "list_reading_lists",
+      "mute",
       "read_post",
       "remove_from_list",
       "save_to_list",
       "search_posts",
       "undo_clap",
       "unfollow",
+      "unmute",
     ]);
     const writes = tools.filter((t) => !t.annotations?.readOnlyHint).map((t) => t.name).sort();
-    expect(writes).toEqual(["clap", "follow", "remove_from_list", "save_to_list", "undo_clap", "unfollow"]);
+    expect(writes).toEqual(["clap", "follow", "mute", "remove_from_list", "save_to_list", "undo_clap", "unfollow", "unmute"]);
     const destructive = tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name).sort();
     expect(destructive).toEqual(["remove_from_list", "undo_clap", "unfollow"]);
   });

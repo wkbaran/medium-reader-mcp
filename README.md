@@ -9,7 +9,7 @@ An MCP server that gives Claude (and any other MCP client) access to your Medium
 ![Node 20+](https://img.shields.io/badge/node-20%2B-339933?logo=nodedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![MCP](https://img.shields.io/badge/MCP-stdio-6E56CF)
-![Tools](https://img.shields.io/badge/tools-15-informational)
+![Tools](https://img.shields.io/badge/tools-17-informational)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
 [Quick start](#quick-start) · [Other clients](#other-mcp-clients) · [Tools](#tools) · [Logging in](#logging-in) · [Privacy and security](#privacy-and-security) · [Troubleshooting](#troubleshooting)
@@ -149,12 +149,13 @@ Authors can be given as `@username` or a profile URL; publications by name, slug
 | Tool | What it does |
 |---|---|
 | `follow` / `unfollow` | Follow or unfollow an author or publication. An ambiguous name lists the matches instead of guessing |
+| `mute` / `unmute` | Hide an author's or publication's posts from your feeds, including an author's posts in publications you follow. Private |
 | `save_to_list` / `remove_from_list` | Add a post to, or remove it from, your reading list or a named list |
 | `clap` / `undo_clap` | Clap for a post (never past Medium's 50-per-post limit), or take your claps back |
 
 The reading tools are marked read-only. The rest are marked as changing your account, so MCP clients ask before running them. `unfollow`, `remove_from_list` and `undo_clap` are also marked destructive. After each change the server checks with Medium and reports what actually happened; doing something that's already done (following someone you follow, saving a saved post) changes nothing.
 
-Follows and claps are visible to the author, and named lists are public.
+Follows and claps are visible to the author, and named lists are public. Mutes are private.
 
 ## Logging in
 

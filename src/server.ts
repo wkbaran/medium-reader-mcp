@@ -50,7 +50,7 @@ export function createServer(provider = new ClientProvider()): McpServer {
     {
       instructions:
         "Read the user's Medium account: their Following feed, full member-only posts, authors and publications they follow, their reading lists, and their reading history. " +
-        "Start with get_feed. follow/unfollow, save_to_list/remove_from_list, and clap/undo_clap change the user's account and should only be used when asked. " +
+        "Start with get_feed. follow/unfollow, mute/unmute, save_to_list/remove_from_list, and clap/undo_clap change the user's account and should only be used when asked. " +
         "If a tool reports an auth problem, tell the user to run `medium-reader-mcp login` in a terminal — do not retry in a loop.",
     },
   );
@@ -142,7 +142,7 @@ export function createServer(provider = new ClientProvider()): McpServer {
       run(async () => {
         const client = await provider.get();
         const result = await client.recentPosts(source, { limit, cursor });
-        const { isFollowing: _drop, ...account } = result.source as typeof result.source & { isFollowing?: boolean };
+        const { isFollowing: _f, isMuting: _m, ...account } = result.source as typeof result.source & { isFollowing?: boolean; isMuting?: boolean };
         return json({ ...result, source: account });
       }),
   );
@@ -267,6 +267,37 @@ export function createServer(provider = new ClientProvider()): McpServer {
       run(async () => {
         const client = await provider.get();
         return json(await client.follow(target, false));
+      }),
+  );
+
+  server.registerTool(
+    "mute",
+    {
+      title: "Mute",
+      description:
+        "Mute an author or publication so their posts stop appearing in the user's feeds, including posts an author publishes in publications the user follows. Muting is private. Only use when the user explicitly asks. If the name is ambiguous the candidates are returned; ask the user which one they mean.",
+      inputSchema: { target: accountRef },
+      annotations: change({ destructive: false, idempotent: true }),
+    },
+    ({ target }) =>
+      run(async () => {
+        const client = await provider.get();
+        return json(await client.mute(target, true));
+      }),
+  );
+
+  server.registerTool(
+    "unmute",
+    {
+      title: "Unmute",
+      description: "Unmute an author or publication. Only use when the user explicitly asks.",
+      inputSchema: { target: accountRef },
+      annotations: change({ destructive: false, idempotent: true }),
+    },
+    ({ target }) =>
+      run(async () => {
+        const client = await provider.get();
+        return json(await client.mute(target, false));
       }),
   );
 

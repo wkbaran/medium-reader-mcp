@@ -262,6 +262,42 @@ describe("account changes", () => {
     expect(await c.follow("@kay", true)).toMatchObject({ changed: true, following: true, message: "Now following Kay." });
   });
 
+  it("mutes and unmutes, verified by re-reading", async () => {
+    let muting = false;
+    const { client: c, requests } = client({
+      User: () => ({ data: { userResult: { __typename: "User", id: "k1", name: "Kay", username: "kay", viewerEdge: { isFollowing: false, isMuting: muting } } } }),
+      MuteUser: () => {
+        muting = true;
+        return { data: { muteUser: { __typename: "User" } } };
+      },
+      UnmuteUser: () => {
+        muting = false;
+        return { data: { unmuteUser: { __typename: "User" } } };
+      },
+    });
+    const muted = await c.mute("@kay", true);
+    expect(muted).toMatchObject({ changed: true, muted: true, message: "Muted Kay." });
+    expect(muted.account).not.toHaveProperty("isMuting");
+    expect(await c.mute("@kay", true)).toMatchObject({ changed: false, muted: true });
+    expect(requests.filter((r) => r.operationName === "MuteUser")).toHaveLength(1);
+    expect(await c.mute("@kay", false)).toMatchObject({ changed: true, muted: false, message: "Unmuted Kay." });
+  });
+
+  it("mutes a publication with the collection mutation", async () => {
+    let muting = false;
+    const { client: c, requests } = client({
+      Publication: () => ({ data: { collectionByDomainOrSlug: { id: "c1", name: "Java Revisited", slug: "javarevisited", viewerEdge: { isFollowing: true, isMuting: muting } } } }),
+      MuteCollection: () => {
+        muting = true;
+        return { data: { muteCollection: { __typename: "Collection" } } };
+      },
+    });
+    // By URL, and with a slug that isn't the display name: the re-read must not
+    // treat it as an ambiguous bare word.
+    expect(await c.mute("https://medium.com/javarevisited", true)).toMatchObject({ changed: true, muted: true });
+    expect(requests.find((r) => r.operationName === "MuteCollection")!.variables).toEqual({ id: "c1" });
+  });
+
   it("lists candidates instead of guessing an ambiguous name", async () => {
     const { client: c } = client({
       Publication: { data: { collectionByDomainOrSlug: null } },

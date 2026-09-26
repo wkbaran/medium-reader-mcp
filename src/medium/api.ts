@@ -147,13 +147,13 @@ const Q = {
   user: `query User($username: ID, $id: ID) {
     userResult(username: $username, id: $id) {
       __typename
-      ... on User { id name username bio viewerEdge { id isFollowing } }
+      ... on User { id name username bio viewerEdge { id isFollowing isMuting } }
     }
   }`,
 
   publication: `query Publication($slug: ID!) {
     collectionByDomainOrSlug(domainOrSlug: $slug) {
-      id name slug domain description viewerEdge { id isFollowing }
+      id name slug domain description viewerEdge { id isFollowing isMuting }
     }
   }`,
 
@@ -268,6 +268,10 @@ const Q = {
   followUser: `mutation FollowUser($id: ID!) { followUser(targetUserId: $id) { id name viewerEdge { id isFollowing } } }`,
   unfollowUser: `mutation UnfollowUser($id: ID!) { unfollowUser(targetUserId: $id) { id name viewerEdge { id isFollowing } } }`,
   followCollection: `mutation FollowCollection($id: ID!) { followCollection(targetCollectionId: $id) { id name viewerEdge { id isFollowing } } }`,
+  muteUser: `mutation MuteUser($id: ID!) { muteUser(targetUserId: $id) { __typename } }`,
+  unmuteUser: `mutation UnmuteUser($id: ID!) { unmuteUser(targetUserId: $id) { __typename } }`,
+  muteCollection: `mutation MuteCollection($id: ID!) { muteCollection(targetCollectionId: $id) { __typename } }`,
+  unmuteCollection: `mutation UnmuteCollection($id: ID!) { unmuteCollection(targetCollectionId: $id) { __typename } }`,
   unfollowCollection: `mutation UnfollowCollection($id: ID!) { unfollowCollection(targetCollectionId: $id) { id name viewerEdge { id isFollowing } } }`,
 
   clap: `mutation Clap($postId: ID!, $userId: ID!, $numClaps: Int!) {
@@ -581,7 +585,7 @@ export class MediumClient {
     const mutation = account.kind === "user" ? (follow ? Q.followUser : Q.unfollowUser) : follow ? Q.followCollection : Q.unfollowCollection;
     await this.http.gql(mutation, { id: account.id }, { requireAuth: true, mutation: true });
     // Re-read rather than trusting the mutation's echo.
-    const after = (await this.resolveAccount(account.kind === "user" ? `@${account.username}` : (account.slug ?? account.id), { strict: true })).isFollowing;
+    const after = (await this.reread(account)).isFollowing;
     return {
       changed: after !== before,
       following: after,
@@ -591,6 +595,38 @@ export class MediumClient {
           ? `${follow ? "Now following" : "Unfollowed"} ${account.name ?? account.url}.`
           : `Medium accepted the request but ${account.name ?? account.url} still shows as ${after ? "followed" : "not followed"}.`,
     };
+  }
+
+  /** Muting hides an author's or publication's posts from the user's feeds. It's private. */
+  async mute(ref: string, mute: boolean) {
+    await this.whoami();
+    const account = await this.resolveAccount(ref, { strict: true });
+    const label = account.name ?? account.url;
+    const before = account.isMuting;
+    if (before === mute) {
+      return { changed: false, muted: mute, account: stripState(account), message: `${label} is already ${mute ? "muted" : "not muted"}.` };
+    }
+    const mutation = account.kind === "user" ? (mute ? Q.muteUser : Q.unmuteUser) : mute ? Q.muteCollection : Q.unmuteCollection;
+    await this.http.gql(mutation, { id: account.id }, { requireAuth: true, mutation: true });
+    // Re-read rather than trusting the mutation's echo.
+    const after = (await this.reread(account)).isMuting;
+    return {
+      changed: after !== before,
+      muted: after,
+      account: stripState(account),
+      message:
+        after === mute
+          ? `${mute ? "Muted" : "Unmuted"} ${label}.`
+          : `Medium accepted the request but ${label} still shows as ${after ? "muted" : "not muted"}.`,
+    };
+  }
+
+  /**
+   * Look an account up again after a change. By URL, not slug: a bare slug is
+   * name-checked in strict mode, and a publication's slug rarely matches its name.
+   */
+  private async reread(account: Account) {
+    return this.resolveAccount(account.kind === "user" ? `@${account.username}` : account.url, { strict: true });
   }
 
   async clap(ref: string, count: number) {
@@ -697,7 +733,7 @@ export class MediumClient {
    * plain name into a Medium account. With `strict`, a plain name must match
    * exactly one account; otherwise the candidates are listed in the error.
    */
-  async resolveAccount(ref: string, opts: { strict?: boolean } = {}): Promise<Account & { isFollowing?: boolean }> {
+  async resolveAccount(ref: string, opts: { strict?: boolean } = {}): Promise<Account & ViewerState> {
     const r = ref.trim();
     const parsed = parseAccountRef(r);
     if (parsed.username) {
@@ -711,7 +747,7 @@ export class MediumClient {
     // account changes it has to actually be named that, or it joins the
     // candidates below: "sam" once followed the publication at medium.com/sam,
     // "Sam blog :]".
-    const direct: Array<Account & { isFollowing?: boolean }> = [];
+    const direct: Array<Account & ViewerState> = [];
     if (parsed.slug) {
       const p = await this.publicationBySlug(parsed.slug);
       if (p && (parsed.explicit || !opts.strict || sameName(p.name, r))) return p;
@@ -744,21 +780,21 @@ export class MediumClient {
   }
 
   private async userByUsername(username: string) {
-    type U = { __typename: string; id: string; name?: string; username?: string; bio?: string | null; viewerEdge?: { isFollowing?: boolean } | null };
+    type U = { __typename: string; id: string; name?: string; username?: string; bio?: string | null; viewerEdge?: ViewerState | null };
     const data = await this.http.gql<{ userResult: U | null }>(Q.user, { username });
     const u = data.userResult;
     if (!u || u.__typename !== "User") return null;
-    return { ...userAccount(u), isFollowing: u.viewerEdge?.isFollowing };
+    return { ...userAccount(u), isFollowing: u.viewerEdge?.isFollowing, isMuting: u.viewerEdge?.isMuting };
   }
 
   private async publicationBySlug(slug: string) {
-    type C = { id: string; name?: string; slug?: string; domain?: string | null; description?: string | null; viewerEdge?: { isFollowing?: boolean } | null };
+    type C = { id: string; name?: string; slug?: string; domain?: string | null; description?: string | null; viewerEdge?: ViewerState | null };
     const data = await this.http.gql<{ collectionByDomainOrSlug: C | null }>(Q.publication, { slug }).catch((err: unknown) => {
       if (err instanceof MediumError && !(err instanceof AuthError)) return { collectionByDomainOrSlug: null };
       throw err;
     });
     const c = data.collectionByDomainOrSlug;
-    return c ? { ...publicationAccount(c), isFollowing: c.viewerEdge?.isFollowing } : null;
+    return c ? { ...publicationAccount(c), isFollowing: c.viewerEdge?.isFollowing, isMuting: c.viewerEdge?.isMuting } : null;
   }
 }
 
@@ -860,8 +896,11 @@ function dedupeAccounts(accounts: Account[]): Account[] {
   return accounts.filter((a) => !seen.has(a.kind + a.id) && Boolean(seen.add(a.kind + a.id)));
 }
 
-function stripState<T extends { isFollowing?: boolean }>(a: T): Omit<T, "isFollowing"> {
-  const { isFollowing: _ignored, ...rest } = a;
+/** The viewer's relationship to an account, as Medium reports it. */
+type ViewerState = { isFollowing?: boolean; isMuting?: boolean };
+
+function stripState<T extends ViewerState>(a: T): Omit<T, keyof ViewerState> {
+  const { isFollowing: _f, isMuting: _m, ...rest } = a;
   return rest;
 }
 
