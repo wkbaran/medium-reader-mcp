@@ -22,10 +22,12 @@ An MCP server that gives Claude (and any other MCP client) access to your Medium
 |---|---|---|
 | Your Medium account | [medium.com](https://medium.com) | Yes. A [membership](https://medium.com/membership) is needed to read member-only stories in full |
 | Node.js 20+ | [nodejs.org](https://nodejs.org) | Yes |
-| MCP SDK, Zod | npm (`@modelcontextprotocol/sdk`, `zod`) | Yes, installed by `npm install` |
+| MCP SDK, Zod, undici | npm (`@modelcontextprotocol/sdk`, `zod`, `undici`) | Yes, installed by `npm install` |
 | Chrome or Edge | Your existing install, driven by `playwright-core` | Optional. Only for the browser login; you can paste cookies instead |
 
 Medium no longer issues API tokens, and its old API never covered reading. This server calls the same GraphQL endpoint Medium's website uses, with your own session, so it can only see what you can see when logged in. No browser runs while you use it; the browser is only for logging in.
+
+Requests to Medium go over HTTP/1.1 through the `undici` package, not Node's built-in `fetch`. Medium's Cloudflare protection returns 403 to Node's HTTP/2 client. Node 26's built-in `fetch` (undici 8) uses HTTP/2 whenever the server offers it, so it would be blocked on every request.
 
 ## Quick start
 
@@ -198,7 +200,7 @@ Medium has no API keys or OAuth for readers, so the server uses your normal web 
 |---|---|
 | *"Not logged in"* or *"session was rejected"* | Run `node dist/cli.js login` |
 | A member-only story shows *"Only a preview was returned"* | The account isn't a Medium member, or the session expired. `status` shows which |
-| *"Cloudflare protection blocked the request"* | Usually temporary; wait a minute. If it persists, Medium has changed its bot rules; please open an issue |
+| *"Cloudflare protection blocked the request"* | Usually temporary; wait a minute. If it persists, Medium has changed its bot rules; please open an issue. (Older versions of this server were blocked on every request under Node 26; update to fix that) |
 | The server doesn't appear in `/mcp` | Restart Claude Code. New servers are only loaded when a session starts |
 | `login` can't find a browser | Install Chrome, set `MEDIUM_BROWSER_PATH`, run `npx playwright install chromium`, or use `--paste` |
 | The server stopped starting after a Node upgrade | `install` records the Node binary it ran with. Run it again with your current Node |

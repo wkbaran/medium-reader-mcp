@@ -1,3 +1,4 @@
+import { Agent, fetch as undiciFetch } from "undici";
 import { GRAPHQL_URL, SESSION_COOKIE, USER_AGENT, USER_COOKIE } from "../config.js";
 import type { Session } from "../auth/credentials.js";
 
@@ -37,6 +38,14 @@ export class BlockedError extends MediumError {
 
 export type FetchLike = typeof fetch;
 
+/**
+ * Cloudflare blocks Node's HTTP/2 client on medium.com, and undici 8 (Node 26's
+ * built-in fetch) uses HTTP/2 whenever the server offers it. Pinning our own
+ * undici to HTTP/1.1 keeps every Node version working; see CLAUDE.md.
+ */
+const http1 = new Agent({ allowH2: false });
+const http1Fetch = ((input, init) => undiciFetch(input as string, { ...init, dispatcher: http1 } as never)) as FetchLike;
+
 export interface HttpOptions {
   session?: Session;
   fetch?: FetchLike;
@@ -71,7 +80,7 @@ export class MediumHttp {
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(private readonly opts: HttpOptions = {}) {
-    this.fetchImpl = opts.fetch ?? fetch;
+    this.fetchImpl = opts.fetch ?? http1Fetch;
     this.timeoutMs = opts.timeoutMs ?? 20_000;
     this.maxRetries = opts.maxRetries ?? 2;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
