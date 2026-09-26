@@ -12,7 +12,7 @@ An MCP server that gives Claude (and any other MCP client) access to your Medium
 ![Tools](https://img.shields.io/badge/tools-17-informational)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
-[Quick start](#quick-start) · [Other clients](#other-mcp-clients) · [Tools](#tools) · [Logging in](#logging-in) · [Privacy and security](#privacy-and-security) · [How Medium's feeds behave](#how-mediums-feeds-behave) · [Troubleshooting](#troubleshooting)
+[Quick start](#quick-start) · [Other clients](#other-mcp-clients) · [Hermes digest](#daily-digest-with-hermes-agent) · [Tools](#tools) · [Logging in](#logging-in) · [Privacy and security](#privacy-and-security) · [How Medium's feeds behave](#how-mediums-feeds-behave) · [Troubleshooting](#troubleshooting)
 
 </div>
 
@@ -125,6 +125,53 @@ Add to `.vscode/mcp.json` in a workspace, or to your user MCP configuration:
 claude mcp add --scope user medium-reader -- node /absolute/path/to/medium-reader-mcp/dist/cli.js
 ```
 </details>
+
+## Daily digest with Hermes Agent
+
+[`hermes/`](hermes/) contains a skill for [Hermes Agent](https://github.com/NousResearch/hermes-agent) that turns this server into a scheduled Medium digest. Each morning it collects new posts from your Following feed and from "For you", filters out clickbait, has subagents read the most promising 20–25 in full, and sends one message with three sections: Following, Medium's top picks (positions 0–25 of "For you") and personal recommendations (positions 25–100). The top posts are flagged ⭐ "Read in full", with a two-line summary and why they're worth reading. The design follows the findings in [How Medium's feeds behave](#how-mediums-feeds-behave).
+
+### Setup
+
+1. **Build the server** on your machine (`npm ci && npm run build`). Copy `dist/`, `package.json` and `package-lock.json` to a directory the Hermes container can see (for example `$HERMES_HOME/mcp/medium-reader-mcp`, which is `/opt/data/mcp/medium-reader-mcp` inside the official image), and install the runtime dependencies there:
+   ```bash
+   npm ci --omit=dev --omit=optional
+   ```
+   Node 20 or later works, including the Node 26 in the Hermes image.
+2. **Log in** on a machine with a browser (`node dist/cli.js login`), then copy `~/.config/medium-reader/auth.json` into a directory on the Hermes host, for example `$HERMES_HOME/mcp/medium-reader-home/`. Keep it at owner-only permissions.
+3. **Register the server** in Hermes's `config.yaml`:
+   ```yaml
+   mcp_servers:
+     medium-reader:
+       command: node
+       args: ["/opt/data/mcp/medium-reader-mcp/dist/cli.js"]
+       env:
+         MEDIUM_READER_HOME: /opt/data/mcp/medium-reader-home
+   ```
+4. **Install the skill:** copy `hermes/SKILL.md` to `$HERMES_HOME/skills/productivity/medium-digest/SKILL.md`, and `hermes/medium_digest_start.sh` to `$HERMES_HOME/scripts/`. Optionally, copy `hermes/interests.example.md` to `STATE_DIR/interests.md` and edit it (see below).
+5. **Edit the Settings block** at the top of `SKILL.md`: `STATE_DIR`, `TIMEZONE`, `MAX_PARALLEL` and the `REAUTH` message.
+6. **Restart Hermes and schedule it.** Cron times are in the Hermes host's local time:
+   ```bash
+   hermes cron create "0 7 * * *" "Run the medium-digest skill and deliver the digest." \
+     --name medium-digest --skill medium-digest --script medium_digest_start.sh --deliver discord:<channel-id>
+   hermes cron run <job-id>   # try it once now
+   ```
+   Run `hermes cron` commands as the user the gateway runs as (`docker exec -u hermes …` in the official image), so the files it writes keep the right owner.
+
+### Customizing
+
+- **What gets picked:** `STATE_DIR/interests.md` is free text the skill reads on every run. Describe what you want more of. Its **Skip** section lists title patterns to drop entirely, for example "I tried N+ courses" or "passive income". Matching is by intent, not exact words. The digest ends with a count of skipped posts and names the authors who produce most of them, so you can mute them.
+- **Sizes:** the numbers in the Procedure section (up to 10 picks from Following, 5 top picks, 10 from "For you", chunks of 5 per subagent) are plain instructions, so edit them directly.
+- **Output format:** the message template targets Discord Markdown. For Telegram, Slack or email, edit the template in the "Send the digest" step and the formatting rules under it.
+- **Schedule and delivery:** use `hermes cron edit <job-id> --schedule "…"` or `--deliver …`.
+
+### Things to know
+
+- **Tool results over about 50,000 characters don't reach the model.** Hermes saves them to a file the model can't parse, and cron runs can't run scripts to help. That's why the skill asks for results in smaller pages. Keep that in mind if you raise the limits.
+- **"For you" is only read to position 150.** Paging to the end of that list (about 1,000 posts) makes Medium replace the list your homepage shows.
+- **State:** each run records what it reported in `STATE_DIR/state.json`, so posts never repeat. A run that fails doesn't save state, so the next run covers the same period.
+- **Read-only:** the skill never uses the tools that change your account.
+- **Cost:** the first run made 34 model calls and took about 12 minutes on Claude Sonnet, most of it the subagents reading posts in full. Some of that was working around results that were too large, which the current skill avoids.
+- **Your own account:** this server uses Medium's undocumented web API with your session cookies. A daily digest is light, read-only use, but if Medium objects to automated access, it's your account at risk.
 
 ## Tools
 

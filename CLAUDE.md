@@ -61,3 +61,8 @@ Common mistakes and confusion points in this project. Add to this list when some
 - TypeScript is 7.x, the native compiler. Some older tsconfig options (`baseUrl`, `moduleResolution: node`) no longer exist.
 - If vitest fails with `Cannot find native binding` (rolldown), it's the npm optional-dependency bug: delete `node_modules` and `package-lock.json`, then run `npm install` again.
 - `playwright-core` is an **optional** dependency and is imported dynamically only by `login`. Don't import it at the top level of anything the server loads.
+
+## Hermes skill
+
+- `hermes/SKILL.md` is the generic, shareable copy of the digest skill; its settings are in the Settings block at the top. The copy running on the maintainer's Hermes host has those values filled in, and the two are kept in sync by hand. When you change one, change the other, and bump `version` in the frontmatter.
+- The skill is a prompt, so it can't be unit-tested. Check changes by running the cron job once (`hermes cron run <id>`) and reading the tool calls in Hermes's `state.db` `messages` table. That's how the result-size and missing-`since` problems were found.
