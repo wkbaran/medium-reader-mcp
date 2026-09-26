@@ -424,7 +424,9 @@ function text(t: string): CallToolResult {
 }
 
 function json(value: unknown): CallToolResult {
-  return text(JSON.stringify(value, null, 2));
+  // Compact: pretty-printing added ~20% to large results, and some MCP hosts
+  // divert results over ~50k characters to a file the model can't parse.
+  return text(JSON.stringify(value));
 }
 
 export function parseSince(since: string | undefined, now = Date.now()): Date | undefined {

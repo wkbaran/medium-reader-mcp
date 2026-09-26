@@ -105,6 +105,22 @@ describe("feed", () => {
     expect(r.items.map((i) => i.id)).toEqual(["p1", "p2"]);
   });
 
+  it("keeps `since` in the cursor, so paging on without it still stops there", async () => {
+    const { client: c, requests } = client({
+      FollowingFeed: (req: GqlRequest) => {
+        const paging = req.variables.paging as { to?: string };
+        return paging.to ? page(["p3", "p9"], { to: "4", limit: 2, source: "" }) : page(["p1", "p2"], { to: "2", limit: 2, source: "" });
+      },
+    });
+    const since = new Date(Date.UTC(2026, 8, 22));
+    const first = await c.feed({ limit: 2, since });
+    expect(first.items.map((i) => i.id)).toEqual(["p1", "p2"]);
+    const rest = await c.feed({ limit: 10, cursor: first.nextCursor });
+    expect(rest.items.map((i) => i.id)).toEqual(["p3"]);
+    // `_since` never reaches Medium.
+    expect(requests.filter((r) => r.operationName === "FollowingFeed").every((r) => !("_since" in (r.variables.paging as object)))).toBe(true);
+  });
+
   it("needs a login", async () => {
     const { client: c } = client({}, null);
     await expect(c.feed()).rejects.toBeInstanceOf(AuthError);

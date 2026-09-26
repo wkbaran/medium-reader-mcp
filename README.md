@@ -12,7 +12,7 @@ An MCP server that gives Claude (and any other MCP client) access to your Medium
 ![Tools](https://img.shields.io/badge/tools-17-informational)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
-[Quick start](#quick-start) · [Other clients](#other-mcp-clients) · [Tools](#tools) · [Logging in](#logging-in) · [Privacy and security](#privacy-and-security) · [Troubleshooting](#troubleshooting)
+[Quick start](#quick-start) · [Other clients](#other-mcp-clients) · [Tools](#tools) · [Logging in](#logging-in) · [Privacy and security](#privacy-and-security) · [How Medium's feeds behave](#how-mediums-feeds-behave) · [Troubleshooting](#troubleshooting)
 
 </div>
 
@@ -196,6 +196,50 @@ Medium has no API keys or OAuth for readers, so the server uses your normal web 
 - **What leaves your machine.** Requests go only to Medium. There's no analytics or telemetry. What Claude does with the content it reads is governed by your MCP client.
 - **Reading history.** Reading a post through this server doesn't add it to your Medium reading history.
 - **Dependencies.** `package-lock.json` pins every dependency to an exact version and integrity hash. Install with `npm ci` for a reproducible install.
+
+## How Medium's feeds behave
+
+Findings from probing Medium's GraphQL API with this server's session in September 2026. They come from one account on one day, so treat them as observations rather than documented behaviour; Medium can change any of this without notice.
+
+### "For you" is a fixed list of about 1,000 posts
+
+- **Medium builds the list once and keeps serving it.** The paging cursor is a `source` ID (a UUID naming the list) plus an offset (`to: 25, 50, … 975`). Three fetches in a row returned the same 50 posts in the same order.
+- **Paging past the end builds a new list.** After about 39 pages of 25, the next page comes from a new `source`, and later fetches, including the first page, use it. The new list is mostly the same posts reordered: a second list added only 15 posts not in the first, and the first 300 of a third added none. Going deeper reshuffles about the same 1,000 candidates rather than reaching older posts.
+- **Posts range up to about a year old:** median 7 days, a quarter older than 30 days, 5% older than about 3 months, and the oldest 356 days.
+- **Heads-up:** paging to the end of "For you" rebuilds the list your homepage shows. `get_feed` returns at most 100 posts per call, so this only happens if you keep following `nextCursor` about ten times.
+- **Not measured:** whether a list also expires after some time without anyone paging to its end.
+
+### The order means something, but the top isn't "most like you"
+
+All 975 posts of one list, compared by position. "Read" means the author or publication appears in the account's reading history.
+
+| Positions | Median age (days) | Median claps | Author you follow | Author you've read | Publication you've read |
+|---|---|---|---|---|---|
+| **0–25** | 22 | **1,554** | 16% | 32% | 36% |
+| 25–100 | 8 | 374 | **32%** | **47%** | 36% |
+| 100–250 | 11 | 411 | 24% | **47%** | 32% |
+| 250–500 | 9 | 206 | 18% | 37% | 46% |
+| 500–750 | 7 | 168 | 8% | 18% | 45% |
+| 750–975 | 4 | 142 | 1% | 4% | 44% |
+
+The share of member-only posts (about 75–85%) and median reading time (5–8 minutes) are about the same at every depth.
+
+- **Positions 0–25 are popular, proven posts spread across your topics.** They're older, with 4–10 times the claps of anything deeper. The listed reasons show deliberate variety: nine topics followed ("Because you follow Startup", "…Education", "…Humor", …) got one post each, alongside "Selected for you" and a few "From your network".
+- **Positions 25–250 are the most personal part.** Here are the highest shares of authors you follow and authors you've actually read.
+- **Positions 500 and beyond are fresh, low-clap posts.** They're increasingly there because of network activity ("*Someone* clapped", "*Someone* responded"), and by the end almost none are from authors you've read.
+
+So to find what a reader would actually pick, positions 25–250 matter more than the first page. To see what Medium is promoting to everyone, look at the first page. Each item's `reason` field (`reasonString` in GraphQL) says why it was included.
+
+### The Following feed
+
+- **It's all posts from authors and publications you follow, roughly newest first,** each tagged `PUBLISHED_BY_USER` or `PUBLISHED_BY_COLLECTION`. On the test account about 94% came through publications, from 190 posts a day, so a handful of high-volume publications made up most of the feed.
+- **Reading a post doesn't remove it** from the feed.
+- **Unfollowing a publication didn't remove posts already in the feed.** Muting worked straight away, and **muting an author** also hides their posts that come through publications you still follow. This is the only way to cut prolific writers out of a publication you want to keep.
+- **"I'm not interested in this story"** (`SHOW_LESS`) doesn't remove the post from the Following feed. The web app only hides it on the page. Medium describes it as a recommendations signal, and its effect on "For you" can't be seen until the list is rebuilt.
+
+### Reproducing this
+
+`get_feed` (`feed: "for_you"`), `list_following` and `get_reading_history` return everything used here: each post's author, publication, claps, publication date and `reason`. [CLAUDE.md](CLAUDE.md) has the GraphQL details: the operations, how paging works, and what each field means.
 
 ## Troubleshooting
 

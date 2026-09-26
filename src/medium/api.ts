@@ -332,7 +332,11 @@ export class MediumClient {
     const source = opts.source ?? "following";
     const limit = opts.limit ?? 25;
     await this.whoami(); // both feeds are empty for logged-out visitors; say so instead
-    let paging = decodeCursor<Record<string, unknown>>(opts.cursor) ?? { limit: Math.min(limit, 25) };
+    // The cursor carries `since` (as `_since`), so a caller that pages with the
+    // cursor but forgets `since` still stops at the same point.
+    const { _since, ...resumed } = decodeCursor<Record<string, unknown>>(opts.cursor) ?? {};
+    const since = opts.since ?? (typeof _since === "number" ? new Date(_since) : undefined);
+    let paging: Record<string, unknown> = opts.cursor ? resumed : { limit: Math.min(limit, 25) };
     const items: PostSummary[] = [];
     const seen = new Set<string>();
 
@@ -342,16 +346,16 @@ export class MediumClient {
       for (const post of page.items) {
         if (seen.has(post.id)) continue;
         seen.add(post.id);
-        if (opts.since && post.published && Date.parse(post.published) < opts.since.getTime()) continue;
+        if (since && post.published && Date.parse(post.published) < since.getTime()) continue;
         fresh++;
         if (items.length < limit) items.push(post);
       }
       if (!page.next) return { items };
       paging = { ...page.next, limit: Math.min(limit - items.length || limit, 25) };
       // The feed is roughly newest-first; a page with nothing new enough means we're done.
-      if (opts.since && fresh === 0) return { items };
+      if (since && fresh === 0) return { items };
     }
-    return { items, nextCursor: encodeCursor(paging) };
+    return { items, nextCursor: encodeCursor(since ? { ...paging, _since: since.getTime() } : paging) };
   }
 
   private async followingPage(paging: Record<string, unknown>) {
