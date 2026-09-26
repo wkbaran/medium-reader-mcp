@@ -49,7 +49,7 @@ export function createServer(provider = new ClientProvider()): McpServer {
     { name: "medium-reader", version: VERSION },
     {
       instructions:
-        "Read the user's Medium account: their Following feed, full member-only posts, authors and publications they follow, and their reading lists. " +
+        "Read the user's Medium account: their Following feed, full member-only posts, authors and publications they follow, their reading lists, and their reading history. " +
         "Start with get_feed. follow/unfollow, save_to_list/remove_from_list, and clap/undo_clap change the user's account and should only be used when asked. " +
         "If a tool reports an auth problem, tell the user to run `medium-reader-mcp login` in a terminal — do not retry in a loop.",
     },
@@ -170,7 +170,8 @@ export function createServer(provider = new ClientProvider()): McpServer {
     "list_following",
     {
       title: "List who you follow",
-      description: "Authors (default) or publications the logged-in user follows, with the total count.",
+      description:
+        "Authors (default) or publications the logged-in user follows. `total` is Medium's own count, which can be larger than the list Medium returns (it seems to include accounts it no longer shows).",
       inputSchema: {
         kind: z.enum(["users", "publications"]).default("users"),
         limit: z.number().int().min(1).max(200).default(50),
@@ -182,6 +183,25 @@ export function createServer(provider = new ClientProvider()): McpServer {
       run(async () => {
         const client = await provider.get();
         return json(await client.following({ kind, limit, cursor }));
+      }),
+  );
+
+  server.registerTool(
+    "get_reading_history",
+    {
+      title: "Get reading history",
+      description:
+        "Posts the user has read on Medium, most recently read first. Medium gives no read date per post. Medium returns these in pages of 15, so `limit` is rounded up to a whole page. Pass nextCursor back as `cursor` for older reads.",
+      inputSchema: {
+        limit: z.number().int().min(1).max(200).default(30),
+        cursor: z.string().optional().describe("nextCursor from a previous call."),
+      },
+      annotations: readOnly,
+    },
+    ({ limit, cursor }) =>
+      run(async () => {
+        const client = await provider.get();
+        return json(await client.readingHistory({ limit, cursor }));
       }),
   );
 

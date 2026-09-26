@@ -111,6 +111,69 @@ describe("feed", () => {
   });
 });
 
+describe("following", () => {
+  const users = (from: number, n: number) => Array.from({ length: n }, (_, i) => ({ id: `u${from + i}`, name: `U${from + i}`, username: `u${from + i}` }));
+
+  it("pages in chunks of 25 (Medium's maximum) to fill a larger limit", async () => {
+    const { client: c, requests } = client({
+      FollowCounts: { data: { userResult: { socialStats: { followingCount: 945 } } } },
+      FollowingUsers: (req: GqlRequest) => {
+        const paging = req.variables.paging as { from?: string; limit: number };
+        if (paging.limit > 25) return { errors: [{ message: 'Invalid value. Expected maximum "25".' }] };
+        const start = Number(paging.from ?? 0);
+        const n = Math.min(paging.limit, 60 - start);
+        return { data: { userResult: { followingUserConnection: { users: users(start, n), pagingInfo: { next: start + n < 60 ? { from: String(start + n), limit: 25 } : null } } } } };
+      },
+    });
+    const first = await c.following({ limit: 40 });
+    expect(first.items.map((u) => u.id)).toEqual(users(0, 40).map((u) => u.id));
+    expect(first.total).toBe(945);
+    expect(requests.filter((r) => r.operationName === "FollowingUsers").map((r) => (r.variables.paging as { limit: number }).limit)).toEqual([25, 15]);
+    const rest = await c.following({ limit: 40, cursor: first.nextCursor });
+    expect(rest.items.map((u) => u.id)).toEqual(users(40, 20).map((u) => u.id));
+    expect(rest.nextCursor).toBeUndefined();
+  });
+});
+
+describe("readingHistory", () => {
+  const page = (ids: Array<string | null>, to: string | null) => ({
+    data: {
+      viewer: {
+        id: SESSION.uid,
+        readingHistory: {
+          postPreviewConnection: {
+            postPreviews: ids.map((id, n) => ({ postId: id ?? `gone${n}`, post: id ? rawPost(id) : null })),
+            pagingInfo: { next: to ? { to, limit: 15, page: null } : null },
+          },
+        },
+      },
+    },
+  });
+
+  it("follows Medium's `to` cursor, skips deleted posts, and resumes", async () => {
+    const { client: c, requests } = client({
+      ReadingHistory: (req: GqlRequest) => {
+        const paging = req.variables.paging as { to?: string };
+        if (!paging.to) return page(["a1", null, "a2"], "200");
+        if (paging.to === "200") return page([null], "150");
+        if (paging.to === "150") return page(["a3", "a4"], "100");
+        return page([], null);
+      },
+    });
+    const first = await c.readingHistory({ limit: 3 });
+    expect(first.items.map((p) => p.id)).toEqual(["a1", "a2", "a3", "a4"]);
+    expect(requests.filter((r) => r.operationName === "ReadingHistory").map((r) => r.variables.paging)).toEqual([{ limit: 15 }, { to: "200", limit: 15 }, { to: "150", limit: 15 }]);
+    const rest = await c.readingHistory({ cursor: first.nextCursor });
+    expect(rest.items).toEqual([]);
+    expect(rest.nextCursor).toBeUndefined();
+  });
+
+  it("needs a login", async () => {
+    const { client: c } = client({}, null);
+    await expect(c.readingHistory()).rejects.toBeInstanceOf(AuthError);
+  });
+});
+
 describe("post", () => {
   const body = { bodyModel: { paragraphs: [{ type: "P", text: "Hello", markups: [] }] } };
 

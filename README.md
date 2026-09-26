@@ -9,7 +9,7 @@ An MCP server that gives Claude (and any other MCP client) access to your Medium
 ![Node 20+](https://img.shields.io/badge/node-20%2B-339933?logo=nodedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![MCP](https://img.shields.io/badge/MCP-stdio-6E56CF)
-![Tools](https://img.shields.io/badge/tools-14-informational)
+![Tools](https://img.shields.io/badge/tools-15-informational)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
 [Quick start](#quick-start) · [Other clients](#other-mcp-clients) · [Tools](#tools) · [Logging in](#logging-in) · [Privacy and security](#privacy-and-security) · [Troubleshooting](#troubleshooting)
@@ -46,6 +46,7 @@ Restart Claude Code (a session that's already running won't pick up new servers)
 - *"Summarize that Towards AI post about schema drift."*
 - *"What has Andrej Karpathy published on Medium?"*
 - *"Which posts in my reading list are about Rust?"*
+- *"Which authors I follow post the most but I never read?"*
 - *"Save this post to my AI list."* (Claude asks before each change)
 
 ### Example
@@ -138,9 +139,10 @@ Authors can be given as `@username` or a profile URL; publications by name, slug
 | `read_post` | A full post as Markdown (or `text`). Long posts are paged with `start`. A member-only story you can't access is flagged as a preview |
 | `get_recent_posts` | Latest posts from one author or publication, with a cursor for paging back |
 | `search_posts` | Keyword search across Medium |
-| `list_following` | Authors or publications you follow, with totals |
+| `list_following` | Authors or publications you follow. `total` is Medium's own count, which can be higher than the list it returns |
 | `list_reading_lists` | Your reading list and named lists, with item counts |
 | `get_list` | The posts in one of those lists |
+| `get_reading_history` | Posts you've read, most recently read first. Medium gives no read date per post. Useful for asking which follows you actually read |
 
 ### Account changes
 

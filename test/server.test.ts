@@ -54,6 +54,7 @@ describe("MCP server", () => {
       "follow",
       "get_feed",
       "get_list",
+      "get_reading_history",
       "get_recent_posts",
       "list_following",
       "list_reading_lists",

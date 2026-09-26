@@ -174,6 +174,18 @@ const Q = {
     }
   }`,
 
+  readingHistory: `query ReadingHistory($paging: PagingOptions) {
+    viewer {
+      id
+      readingHistory {
+        postPreviewConnection(paging: $paging) {
+          postPreviews { postId post { ${POST_FIELDS} } }
+          pagingInfo { next { to limit page } }
+        }
+      }
+    }
+  }`,
+
   followCounts: `query FollowCounts($id: ID) {
     userResult(id: $id) { ... on User { socialStats { followingCount collectionFollowingCount } } }
   }`,
@@ -449,20 +461,57 @@ export class MediumClient {
       };
     }
 
+    // Medium caps followingUserConnection pages at 25, so fetch several to fill `limit`.
     type U = { id: string; name?: string; username?: string; bio?: string | null };
-    const paging = decodeCursor<Record<string, unknown>>(opts.cursor) ?? {};
-    const data = await this.http.gql<{ userResult: { followingUserConnection?: { users: U[]; pagingInfo?: { next?: Record<string, unknown> | null } | null } } | null }>(
-      Q.followingUsers,
-      { id: me.id, paging: cleanPaging({ ...paging, limit: opts.limit ?? 50 }) },
-      { requireAuth: true },
-    );
-    const conn = data.userResult?.followingUserConnection;
-    const next = conn?.pagingInfo?.next;
+    const limit = opts.limit ?? 50;
+    let paging: Record<string, unknown> | null = decodeCursor<Record<string, unknown>>(opts.cursor) ?? {};
+    const items: Account[] = [];
+    while (paging && items.length < limit) {
+      const data: { userResult: { followingUserConnection?: { users: U[]; pagingInfo?: { next?: Record<string, unknown> | null } | null } } | null } =
+        await this.http.gql(Q.followingUsers, { id: me.id, paging: cleanPaging({ ...paging, limit: Math.min(limit - items.length, FOLLOWING_PAGE) }) }, { requireAuth: true });
+      const conn = data.userResult?.followingUserConnection;
+      items.push(...(conn?.users ?? []).map(userAccount));
+      const next = conn?.pagingInfo?.next;
+      paging = next?.from && conn?.users.length ? next : null;
+    }
     return {
+      // socialStats counts more accounts than the list returns (945 vs 802 on a test account).
       total: counts.followingCount,
-      items: (conn?.users ?? []).map(userAccount),
-      nextCursor: next?.from ? encodeCursor(next) : undefined,
+      items,
+      nextCursor: paging ? encodeCursor(paging) : undefined,
     };
+  }
+
+  /**
+   * Posts the user has read, most recently read first. Medium pages this 15 at a
+   * time by a `to` timestamp and gives no per-post read time.
+   */
+  async readingHistory(opts: { limit?: number; cursor?: string } = {}): Promise<Page<PostSummary>> {
+    const limit = opts.limit ?? 25;
+    type Conn = { postPreviews?: Array<{ postId?: string; post?: RawPost | null }>; pagingInfo?: { next?: Record<string, unknown> | null } | null };
+    let paging: Record<string, unknown> | null = decodeCursor<Record<string, unknown>>(opts.cursor) ?? { limit: HISTORY_PAGE };
+    const items: PostSummary[] = [];
+    const seen = new Set<string>();
+    while (paging && items.length < limit) {
+      const data: { viewer: { readingHistory?: { postPreviewConnection?: Conn | null } | null } | null } = await this.http.gql(
+        Q.readingHistory,
+        { paging: cleanPaging(paging) },
+        { requireAuth: true },
+      );
+      if (!data.viewer) throw new AuthError("expired");
+      const conn = data.viewer.readingHistory?.postPreviewConnection;
+      const previews = conn?.postPreviews ?? [];
+      for (const p of previews) {
+        // Deleted posts come back with a null `post`.
+        if (!p.post || seen.has(p.post.id)) continue;
+        seen.add(p.post.id);
+        items.push(summarize(p.post));
+      }
+      const next = conn?.pagingInfo?.next;
+      paging = next?.to && previews.length && next.to !== paging.to ? { to: next.to, page: next.page, limit: HISTORY_PAGE } : null;
+    }
+    // A page can overshoot `limit`; the cursor resumes after the whole page, so return all of it.
+    return { items, nextCursor: paging ? encodeCursor(paging) : undefined };
   }
 
   async lists(): Promise<ListInfo[]> {
@@ -838,6 +887,11 @@ function failUnlessSuccess(typename: string, expected: string): void {
 }
 
 /** Medium's PagingOptions reject nulls and unknown empty strings. */
+/** Medium rejects followingUserConnection pages over 25. */
+const FOLLOWING_PAGE = 25;
+/** Medium's reading-history page size; it ignores other limits. */
+const HISTORY_PAGE = 15;
+
 function cleanPaging(p: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(p).filter(([, v]) => v !== null && v !== undefined && v !== ""));
 }
