@@ -59,6 +59,7 @@ describe("MCP server", () => {
       "list_following",
       "list_reading_lists",
       "mute",
+      "rate_headings",
       "read_post",
       "remove_from_list",
       "save_to_list",

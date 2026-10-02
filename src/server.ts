@@ -1,13 +1,20 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { loadCredentials, type Credentials } from "./auth/credentials.js";
 import { countWords, markdownToText, paragraphsToMarkdown } from "./format.js";
 import { MAX_CLAPS, MediumClient, READING_LIST, type FullPost } from "./medium/api.js";
-import { AuthError, MediumHttp, type FetchLike } from "./medium/http.js";
+import { digestDir } from "./config.js";
+import { isDigestRef, resolveReadRef } from "./digest/finish.js";
+import { registerDigestTools, registerRateHeadings } from "./digest/tools.js";
+import { MediumHttp, type FetchLike } from "./medium/http.js";
+import { json, run, text } from "./tool-util.js";
 
-const VERSION = "0.1.0";
+import { parseSince } from "./tool-util.js";
+
+export { parseSince };
+
+const VERSION = "0.2.0";
 
 /**
  * Hands out a client for the current credentials. Credentials are re-read on
@@ -45,13 +52,17 @@ const listRef = z
   .describe('"reading-list" (default) or the name / id of one of the user\'s lists, as shown by list_reading_lists.');
 
 export function createServer(provider = new ClientProvider()): McpServer {
+  const digest = digestDir();
   const server = new McpServer(
     { name: "medium-reader", version: VERSION },
     {
       instructions:
         "Read the user's Medium account: their Following feed, full member-only posts, authors and publications they follow, their reading lists, and their reading history. " +
         "Start with get_feed. follow/unfollow, mute/unmute, save_to_list/remove_from_list, and clap/undo_clap change the user's account and should only be used when asked. " +
-        "If a tool reports an auth problem, tell the user to run `medium-reader-mcp login` in a terminal — do not retry in a loop.",
+        "If a tool reports an auth problem, tell the user to run `medium-reader-mcp login` in a terminal — do not retry in a loop." +
+        (digest
+          ? " For the daily digest: call digest_begin once, read the shortlisted posts with read_post (it accepts the digest's refs such as F3), then call digest_finish once and reply with the text after its ===== DIGEST line. digest_status shows the state."
+          : ""),
     },
   );
 
@@ -102,7 +113,7 @@ export function createServer(provider = new ClientProvider()): McpServer {
       description:
         "Read a Medium post as Markdown. Member-only posts are returned in full when the logged-in account is a Medium member. Works for posts on custom domains too. Long posts are paged: pass `start` from the previous response to continue.",
       inputSchema: {
-        url: postRef,
+        url: digest ? z.string().describe("Post URL, the post's hex id, or a digest ref such as F3 from digest_begin.") : postRef,
         format: z.enum(["markdown", "text"]).default("markdown"),
         start: z.number().int().min(0).default(0).describe("Character offset into the body, for paging."),
         max_chars: z.number().int().min(1000).max(200_000).default(40_000),
@@ -112,7 +123,8 @@ export function createServer(provider = new ClientProvider()): McpServer {
     ({ url, format, start, max_chars }) =>
       run(async () => {
         const client = await provider.get();
-        const post = await client.post(url);
+        const ref = digest && isDigestRef(url) ? await resolveReadRef(digest, url) : url;
+        const post = await client.post(ref);
         const md = paragraphsToMarkdown(post.paragraphs, { title: post.summary.title });
         const body = format === "text" ? markdownToText(md) : md;
         const chunk = body.slice(start, start + max_chars);
@@ -364,6 +376,9 @@ export function createServer(provider = new ClientProvider()): McpServer {
       }),
   );
 
+  registerRateHeadings(server);
+  if (digest) registerDigestTools(server, provider, digest);
+
   return server;
 }
 
@@ -397,6 +412,8 @@ async function postHeader(client: MediumClient, post: FullPost, md: string): Pro
     s.publication ? `- Publication: ${s.publication}` : null,
     s.published ? `- Published: ${s.published.slice(0, 10)}` : null,
     s.url ? `- URL: ${s.url}` : null,
+    `- ID: ${s.id}`,
+    `- Access: ${post.previewOnly ? "preview-only" : "full"}`,
     s.readingMinutes ? `- Reading time: ${s.readingMinutes} min` : null,
     `- Words: ${post.wordCount ?? countWords(md)}${post.previewOnly ? ` (preview has ${countWords(md)})` : ""}`,
     s.claps != null ? `- Claps: ${s.claps}` : null,
@@ -405,38 +422,4 @@ async function postHeader(client: MediumClient, post: FullPost, md: string): Pro
     warning,
   ].filter((l): l is string => l !== null);
   return lines.join("\n");
-}
-
-async function run(fn: () => Promise<CallToolResult>): Promise<CallToolResult> {
-  try {
-    return await fn();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      isError: true,
-      content: [{ type: "text", text: err instanceof AuthError ? `Authentication required: ${message}` : `Error: ${message}` }],
-    };
-  }
-}
-
-function text(t: string): CallToolResult {
-  return { content: [{ type: "text", text: t }] };
-}
-
-function json(value: unknown): CallToolResult {
-  // Compact: pretty-printing added ~20% to large results, and some MCP hosts
-  // divert results over ~50k characters to a file the model can't parse.
-  return text(JSON.stringify(value));
-}
-
-export function parseSince(since: string | undefined, now = Date.now()): Date | undefined {
-  if (!since) return undefined;
-  const rel = since.trim().match(/^(\d+)\s*([hdw])$/i);
-  if (rel) {
-    const unit = { h: 3_600_000, d: 86_400_000, w: 604_800_000 }[rel[2]!.toLowerCase() as "h" | "d" | "w"];
-    return new Date(now - Number(rel[1]) * unit);
-  }
-  const t = Date.parse(since);
-  if (Number.isNaN(t)) throw new Error(`Couldn't understand since="${since}". Use an ISO date or e.g. "7d".`);
-  return new Date(t);
 }
