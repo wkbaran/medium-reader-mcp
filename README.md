@@ -9,7 +9,7 @@ An MCP server that gives Claude (and any other MCP client) access to your Medium
 ![Node 20+](https://img.shields.io/badge/node-20%2B-339933?logo=nodedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![MCP](https://img.shields.io/badge/MCP-stdio-6E56CF)
-![Tools](https://img.shields.io/badge/tools-17-informational)
+![Tools](https://img.shields.io/badge/tools-18%20%2B%204%20digest-informational)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
 [Quick start](#quick-start) · [Other clients](#other-mcp-clients) · [Hermes digest](#daily-digest-with-hermes-agent) · [Tools](#tools) · [Logging in](#logging-in) · [Privacy and security](#privacy-and-security) · [How Medium's feeds behave](#how-mediums-feeds-behave) · [Troubleshooting](#troubleshooting)
@@ -128,7 +128,13 @@ claude mcp add --scope user medium-reader -- node /absolute/path/to/medium-reade
 
 ## Daily digest with Hermes Agent
 
-[`hermes/`](hermes/) contains a skill for [Hermes Agent](https://github.com/NousResearch/hermes-agent) that turns this server into a scheduled Medium digest. Each morning it collects new posts from your Following feed and from "For you", filters out clickbait, has subagents read the most promising 20–25 in full, and sends one message with three sections: Following, Medium's top picks (positions 0–25 of "For you") and personal recommendations (positions 25–100). The top posts are flagged ⭐ "Read in full", with a two-line summary and why they're worth reading. The design follows the findings in [How Medium's feeds behave](#how-mediums-feeds-behave).
+[`hermes/`](hermes/) contains a skill for [Hermes Agent](https://github.com/NousResearch/hermes-agent) that turns this server into a scheduled Medium digest. Each morning it collects new posts from your Following feed and from "For you", drops clickbait, has subagents read the most promising 20–25 in full, and sends one message with three sections: Following, Medium's top picks (positions 0–25 of "For you") and personal recommendations (positions 25–100). The top posts are flagged ⭐ "Read in full", with a two-line summary and why they're worth reading. The design follows the findings in [How Medium's feeds behave](#how-mediums-feeds-behave).
+
+The server does the mechanical work through four digest tools, so the agent's model only judges what to read and what's worth it:
+
+1. `digest_begin` fetches everything new since the last digest, drops posts it has already reported, has a model rate every title against the **Skip** section of your `interests.md` (through MCP sampling, so the client's model does it) and drops the confident skips. It returns a compact plain-text list with a ref per post (`F3`, `T1`, `Y12`) and saves a run file; nothing else is written.
+2. The agent shortlists refs, and subagents read them with `read_post`, which accepts the refs.
+3. `digest_finish` takes the agent's picks by ref, checks them, lays out the final Discord message, and saves state (every Following post plus every post it named). The agent replies with that message as is.
 
 ### Setup
 
@@ -138,7 +144,8 @@ claude mcp add --scope user medium-reader -- node /absolute/path/to/medium-reade
    ```
    Node 20 or later works, including the Node 26 in the Hermes image.
 2. **Log in** on a machine with a browser (`node dist/cli.js login`), then copy `~/.config/medium-reader/auth.json` into a directory on the Hermes host, for example `$HERMES_HOME/mcp/medium-reader-home/`. Keep it at owner-only permissions.
-3. **Register the server** in Hermes's `config.yaml`:
+3. **Create the digest directory**, writable by the user Hermes runs as, for example `$HERMES_HOME/sandbox/medium_digest`. Copy `hermes/interests.example.md` into it as `interests.md` and edit it (see below). A `state.json` from version 1 of the skill keeps working.
+4. **Register the server** in Hermes's `config.yaml`. The digest tools only appear when `MEDIUM_READER_DIGEST_DIR` is set:
    ```yaml
    mcp_servers:
      medium-reader:
@@ -146,10 +153,15 @@ claude mcp add --scope user medium-reader -- node /absolute/path/to/medium-reade
        args: ["/opt/data/mcp/medium-reader-mcp/dist/cli.js"]
        env:
          MEDIUM_READER_HOME: /opt/data/mcp/medium-reader-home
+         MEDIUM_READER_DIGEST_DIR: /opt/data/sandbox/medium_digest
+         MEDIUM_READER_DIGEST_TZ: America/Denver
+       sampling:            # the title rater; Hermes enables sampling by default
+         model: <a local model>   # optional: overrides auxiliary.mcp.model for this server
+         timeout: 120             # seconds per request; Hermes's default of 30 is short for a local model
    ```
-4. **Install the skill:** copy `hermes/SKILL.md` to `$HERMES_HOME/skills/productivity/medium-digest/SKILL.md`, and `hermes/medium_digest_start.sh` to `$HERMES_HOME/scripts/`. Optionally, copy `hermes/interests.example.md` to `STATE_DIR/interests.md` and edit it (see below).
-5. **Edit the Settings block** at the top of `SKILL.md`: `STATE_DIR`, `TIMEZONE`, `MAX_PARALLEL` and the `REAUTH` message.
-6. **Restart Hermes and schedule it.** Cron times are in the Hermes host's local time:
+   Sampling requests go to the provider in `auxiliary.mcp` (`provider`, `model`) unless `sampling.model` overrides the model. A cheap local model is enough: it only rates headlines, about 40 per request.
+5. **Install the skill:** copy `hermes/SKILL.md` to `$HERMES_HOME/skills/productivity/medium-digest/SKILL.md`, and `hermes/medium_digest_start.sh` to `$HERMES_HOME/scripts/`. Edit the Settings block at the top of `SKILL.md`: `MAX_PARALLEL` and the `REAUTH` message.
+6. **Restart Hermes and schedule it.** Cron times are in the Hermes host's local time. The job needs only the `delegation` and `medium-reader` toolsets; it uses no file tools:
    ```bash
    hermes cron create "0 7 * * *" "Run the medium-digest skill and deliver the digest." \
      --name medium-digest --skill medium-digest --script medium_digest_start.sh --deliver discord:<channel-id>
@@ -159,18 +171,21 @@ claude mcp add --scope user medium-reader -- node /absolute/path/to/medium-reade
 
 ### Customizing
 
-- **What gets picked:** `STATE_DIR/interests.md` is free text the skill reads on every run. Describe what you want more of. Its **Skip** section lists title patterns to drop entirely, for example "I tried N+ courses" or "passive income". Matching is by intent, not exact words. The digest ends with a count of skipped posts and names the authors who produce most of them, so you can mute them.
-- **Sizes:** the numbers in the Procedure section (up to 10 picks from Following, 5 top picks, 10 from "For you", chunks of 5 per subagent) are plain instructions, so edit them directly.
-- **Output format:** the message template targets Discord Markdown. For Telegram, Slack or email, edit the template in the "Send the digest" step and the formatting rules under it.
+- **What gets picked:** `interests.md` in the digest directory has two sections. **Interests** is shown to the agent when it shortlists. **Skip** lists title patterns to drop entirely, for example "I tried N+ courses" or "passive income"; a model rates each title against it by intent, not exact words, and titles it rates at 70% or more (`MEDIUM_READER_DIGEST_SKIP_THRESHOLD`) never reach the agent. The digest ends with a count of skipped posts and names the authors or publications behind most of them, so you can mute them. There's no built-in skip list.
+- **Sizes:** the shortlist sizes (up to 10 from Following, 5 top picks, 10 from "For you", chunks of 5 per subagent) are plain instructions in the skill's Procedure. How much is fetched is set by `digest_begin`'s arguments; the defaults match the numbers above.
+- **Output format:** `MEDIUM_READER_DIGEST_STYLE=markdown` drops the Discord-specific `<…>` around masked links. The layout itself is in `src/digest/render.ts`.
 - **Schedule and delivery:** use `hermes cron edit <job-id> --schedule "…"` or `--deliver …`.
 
 ### Things to know
 
-- **Tool results over about 50,000 characters don't reach the model.** Hermes saves them to a file the model can't parse, and cron runs can't run scripts to help. That's why the skill asks for results in smaller pages. Keep that in mind if you raise the limits.
-- **"For you" is only read to position 150.** Paging to the end of that list (about 1,000 posts) makes Medium replace the list your homepage shows.
-- **State:** each run records what it reported in `STATE_DIR/state.json`, so posts never repeat. A run that fails doesn't save state, so the next run covers the same period.
+- **State:** `state.json` in the digest directory holds `last_run` and the ids of every post reported, oldest first, trimmed to the newest 3,000 (`MEDIUM_READER_DIGEST_KEEP`). Only `digest_finish` and `mark_reported` write it: under a lock file, via a temporary file and a rename, with the previous version kept as `state.json.bak`. If a run dies before `digest_finish`, nothing is saved and the next run covers the same period. `last_run` is the server's clock when `digest_begin` started, and it never moves backwards.
+- **Repairs:** `digest_status` shows the state and the last runs, and whether each was committed. `mark_reported` adds ids (or URLs, or refs from the latest run) and can move `last_run` forward.
+- **Run files:** each `digest_begin` writes `runs/<run_id>.json` with every post it considered, the rater's verdicts and, once finished, the picks. The newest 14 are kept. Refs (`F3`) always refer to the latest run.
+- **If the rater can't run** (the client doesn't support sampling, the model errors or times out, or returns something unparseable), nothing is skipped and `digest_begin` says so. The whole call stays under about three minutes, so a slow model leaves the remaining titles unrated rather than timing the tool out.
+- **Tool results stay under 40,000 characters.** Hermes saves results over about 50,000 to a file the model can't parse. On a very large day `digest_begin` leaves the tail of "For you", then of Following, out of the list and says which refs; omitted Following posts are still saved as reported and listed under "Also new".
+- **"For you" is read only to position 150 by default, and never past 250.** Paging to the end of that list (about 1,000 posts) makes Medium replace the list your homepage shows.
+- **A post that couldn't be read** is listed under ⚠ and saved as reported; it isn't retried.
 - **Read-only:** the skill never uses the tools that change your account.
-- **Cost:** the first run made 34 model calls and took about 12 minutes on Claude Sonnet, most of it the subagents reading posts in full. Some of that was working around results that were too large, which the current skill avoids.
 - **Your own account:** this server uses Medium's undocumented web API with your session cookies. A daily digest is light, read-only use, but if Medium objects to automated access, it's your account at risk.
 
 ## Tools
@@ -190,6 +205,18 @@ Authors can be given as `@username` or a profile URL; publications by name, slug
 | `list_reading_lists` | Your reading list and named lists, with item counts |
 | `get_list` | The posts in one of those lists |
 | `get_reading_history` | Posts you've read, most recently read first. Medium gives no read date per post. Useful for asking which follows you actually read |
+| `rate_headings` | Rates headlines against conditions you define (up to 5, each with a definition), with a confidence and a short reason per condition. Uses your MCP client's own model through sampling, so it only works in clients that support sampling |
+
+### Digest (only when `MEDIUM_READER_DIGEST_DIR` is set)
+
+| Tool | What it does |
+|---|---|
+| `digest_begin` | Collects what's new since the last digest, drops posts already reported and titles rated as skips, and returns a plain-text work list with refs (`F3`, `T1`, `Y12`). Writes only a run file |
+| `digest_finish` | Takes the picks by ref, renders the final message, and saves state. Repeating it for the same run changes nothing; `dry_run` saves nothing |
+| `digest_status` | Read-only: `last_run`, how many ids are saved, and the recent runs |
+| `mark_reported` | Repair: adds post ids, URLs or refs to the saved state, and optionally moves `last_run` forward |
+
+`read_post` also accepts a ref from the latest digest run, and its header always includes the post's `ID` and `Access` (`full` or `preview-only`).
 
 ### Account changes
 
@@ -200,7 +227,7 @@ Authors can be given as `@username` or a profile URL; publications by name, slug
 | `save_to_list` / `remove_from_list` | Add a post to, or remove it from, your reading list or a named list |
 | `clap` / `undo_clap` | Clap for a post (never past Medium's 50-per-post limit), or take your claps back |
 
-The reading tools are marked read-only. The rest are marked as changing your account, so MCP clients ask before running them. `unfollow`, `remove_from_list` and `undo_clap` are also marked destructive. After each change the server checks with Medium and reports what actually happened; doing something that's already done (following someone you follow, saving a saved post) changes nothing.
+The reading tools are marked read-only. The digest tools other than `digest_status` are marked as writing, but they only write files in the digest directory. The rest are marked as changing your account, so MCP clients ask before running them. `unfollow`, `remove_from_list` and `undo_clap` are also marked destructive. After each change the server checks with Medium and reports what actually happened; doing something that's already done (following someone you follow, saving a saved post) changes nothing.
 
 Follows and claps are visible to the author, and named lists are public. Mutes are private.
 
@@ -233,6 +260,11 @@ Medium has no API keys or OAuth for readers, so the server uses your normal web 
 | `MEDIUM_COOKIE` | A full `Cookie:` header to take `sid` and `uid` from |
 | `MEDIUM_READER_HOME` | Config directory (default `~/.config/medium-reader`) |
 | `MEDIUM_BROWSER_PATH` | A Chromium-based browser for `login`, if Chrome and Edge aren't installed |
+| `MEDIUM_READER_DIGEST_DIR` | Directory for the digest's `state.json`, `interests.md` and `runs/`. Unset (the default) hides the digest tools |
+| `MEDIUM_READER_DIGEST_TZ` | IANA time zone for dates in the digest (default `TZ`, then UTC) |
+| `MEDIUM_READER_DIGEST_KEEP` | How many reported post ids to keep (default 3000) |
+| `MEDIUM_READER_DIGEST_STYLE` | `discord` (default) or `markdown`: whether masked links get Discord's `<…>` |
+| `MEDIUM_READER_DIGEST_SKIP_THRESHOLD` | Rater confidence at which a title is skipped, 0–1 (default 0.7) |
 
 </details>
 
@@ -317,6 +349,9 @@ src/
   auth/login.ts          browser and paste login
   medium/http.ts         GraphQL client: cookies, Cloudflare detection, retries
   medium/api.ts          queries, feed, posts, follows, lists, claps
+  digest/                digest tools: state.ts (atomic state), collect.ts (digest_begin),
+                         rater.ts (title rating via MCP sampling), render.ts (the message),
+                         finish.ts (digest_finish, status, mark_reported), tools.ts (registration)
 test/                    one file per module, plus an in-memory MCP client test
 ```
 
