@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { MediumClient, parseAccountRef, parsePostId } from "../src/medium/api.js";
+import { FOR_YOU_MAX_POSITION, MediumClient, parseAccountRef, parsePostId } from "../src/medium/api.js";
 import { AuthError, MediumHttp } from "../src/medium/http.js";
-import { asViewer, fakeMedium, rawPost, SESSION, VIEWER, type GqlRequest } from "./helpers.js";
+import { asViewer, fakeMedium, forYouList, rawPost, SESSION, VIEWER, type GqlRequest } from "./helpers.js";
 
 function client(handlers: Parameters<typeof fakeMedium>[0], session: typeof SESSION | null = SESSION) {
   const fake = fakeMedium({ Viewer: asViewer(VIEWER), ...handlers });
@@ -124,6 +124,43 @@ describe("feed", () => {
   it("needs a login", async () => {
     const { client: c } = client({}, null);
     await expect(c.feed()).rejects.toBeInstanceOf(AuthError);
+  });
+});
+
+describe("forYouRange", () => {
+  const list = (n: number) => Array.from({ length: n }, (_, i) => rawPost(i.toString(16).padStart(12, "0")));
+
+  it("returns posts at the asked positions, tagged with their position", async () => {
+    const { client: c, requests } = client({ RecommendedFeed: forYouList(list(300)) });
+    const r = await c.forYouRange(25, 100);
+    expect(r.items).toHaveLength(75);
+    expect(r.items[0]).toMatchObject({ id: (25).toString(16).padStart(12, "0"), position: 25, reason: "Based on your reading history" });
+    expect(r.items.at(-1)!.position).toBe(99);
+    expect(requests.filter((q) => q.operationName === "RecommendedFeed")).toHaveLength(4);
+    // Continue where it stopped, without re-reading the top of the list.
+    const more = await c.forYouRange(100, 150, r.resume);
+    expect(more.items.map((i) => i.position)).toEqual(Array.from({ length: 50 }, (_, i) => 100 + i));
+    expect(requests.filter((q) => q.operationName === "RecommendedFeed")).toHaveLength(6);
+  });
+
+  it("never asks Medium for offset 250 or beyond", async () => {
+    const { client: c, requests } = client({ RecommendedFeed: forYouList(list(1000)) });
+    const r = await c.forYouRange(0, FOR_YOU_MAX_POSITION);
+    expect(r.items).toHaveLength(250);
+    const offsets = requests.filter((q) => q.operationName === "RecommendedFeed").map((q) => Number((q.variables.paging as { to?: string }).to ?? 0));
+    expect(Math.max(...offsets)).toBe(225);
+    await expect(c.forYouRange(0, 251)).rejects.toThrow(/never read past position 250/);
+    // A resume cursor pointing at 250 is refused rather than sent.
+    await expect(c.forYouRange(0, 250, { position: 240, paging: { to: "250", source: "list-1" } })).rejects.toThrow(/Refusing to read "For you" at offset 250/);
+  });
+
+  it("drops a post repeated across pages", async () => {
+    const posts = list(50);
+    posts[30] = posts[3]!;
+    const { client: c } = client({ RecommendedFeed: forYouList(posts) });
+    const r = await c.forYouRange(0, 50);
+    expect(r.items).toHaveLength(49);
+    expect(r.resume).toBeNull();
   });
 });
 

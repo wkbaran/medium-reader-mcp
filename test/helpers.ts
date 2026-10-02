@@ -66,3 +66,26 @@ export function rawPost(id: string, extra: Record<string, unknown> = {}) {
     ...extra,
   };
 }
+
+/**
+ * A fake "For you" list served 25 at a time the way Medium pages it
+ * (`to` = offset, a fixed `source`). Throws if asked for offset 250 or beyond,
+ * which would rebuild the user's homepage list.
+ */
+export function forYouList(posts: Array<Record<string, unknown>>, reason = (i: number) => (i % 2 ? "Based on your reading history" : "Because you follow Coding")) {
+  return (req: GqlRequest): Reply => {
+    const paging = req.variables.paging as { to?: string; source?: string; limit?: number };
+    const offset = Number(paging.to ?? 0);
+    if (offset >= 250) throw new Error(`asked for For you offset ${offset}`);
+    const slice = posts.slice(offset, offset + 25);
+    const next = offset + 25 < posts.length ? { to: String(offset + 25), source: "list-1", limit: 25, page: offset / 25 + 1 } : null;
+    return {
+      data: {
+        webRecommendedFeed: {
+          items: slice.map((post, i) => ({ reasonString: reason(offset + i), post })),
+          pagingInfo: { next },
+        },
+      },
+    };
+  };
+}

@@ -74,6 +74,19 @@ export interface ListInfo {
 
 export type FeedSource = "following" | "for_you";
 
+/** A "For you" post and its position in Medium's list (0-based). */
+export type RankedPost = PostSummary & { position: number };
+
+/** Where a forYouRange call stopped, to continue from without re-reading the top of the list. */
+export interface ForYouResume {
+  position: number;
+  paging: Record<string, unknown>;
+}
+
+/** "For you" is never read at or beyond this position (see CLAUDE.md). */
+export const FOR_YOU_MAX_POSITION = 250;
+const FOR_YOU_PAGE = 25;
+
 // ---------------------------------------------------------------------------
 // Queries. Hand-written subsets of what medium.com's own web app sends; the
 // originals can be recovered from its JS bundles (see CLAUDE.md).
@@ -384,6 +397,43 @@ export class MediumClient {
       items: (feed?.items ?? []).flatMap((i) => (i.post ? [{ ...summarize(i.post), reason: i.reasonString ?? undefined }] : [])),
       next: feed?.pagingInfo?.next ?? null,
     };
+  }
+
+  /**
+   * "For you" posts at list positions [start, end), each tagged with its position.
+   * Pages from the top of the list (there's no way to jump to an offset without
+   * the list's `source`), or from `resume` to continue an earlier call. Never
+   * requests an offset at or beyond FOR_YOU_MAX_POSITION: paging to the end of the
+   * list makes Medium build a new one for the user's homepage.
+   */
+  async forYouRange(start: number, end: number, resume?: ForYouResume | null): Promise<{ items: RankedPost[]; resume: ForYouResume | null }> {
+    if (end > FOR_YOU_MAX_POSITION) throw new MediumError(`"For you" is never read past position ${FOR_YOU_MAX_POSITION} (asked for ${end}).`);
+    await this.whoami();
+    let position = resume?.position ?? 0;
+    let paging: Record<string, unknown> | null = resume?.paging ?? { limit: FOR_YOU_PAGE };
+    const items: RankedPost[] = [];
+    const seen = new Set<string>();
+    while (paging && position < end) {
+      const offset = paging.to !== undefined && paging.to !== null && paging.to !== "" ? Number(paging.to) : position;
+      if (!(offset < FOR_YOU_MAX_POSITION && position < FOR_YOU_MAX_POSITION)) {
+        throw new MediumError(`Refusing to read "For you" at offset ${offset}: the limit is ${FOR_YOU_MAX_POSITION}.`);
+      }
+      const page = await this.recommendedPage({ ...paging, limit: FOR_YOU_PAGE });
+      for (const [i, post] of page.items.entries()) {
+        const pos = position + i;
+        if (pos < start || pos >= end || seen.has(post.id)) continue;
+        seen.add(post.id);
+        items.push({ ...post, position: pos });
+      }
+      if (!page.items.length || !page.next) {
+        paging = null;
+        break;
+      }
+      const nextTo = Number(page.next.to);
+      position = Number.isFinite(nextTo) && nextTo > position ? nextTo : position + page.items.length;
+      paging = { ...page.next };
+    }
+    return { items, resume: paging ? { position, paging } : null };
   }
 
   async post(ref: string): Promise<FullPost> {
