@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseInterests, skipCondition } from "../src/digest/interests.js";
-import { buildPrompt, parseRatings, SamplingRater, type SampleFn } from "../src/digest/rater.js";
+import { parseInterests } from "../src/digest/interests.js";
+import { buildPrompt, parseRatings, SamplingRater, skipCondition, type SampleFn } from "../src/classifier/sampling.js";
 
 const INTERESTS = `# Medium digest interests
 

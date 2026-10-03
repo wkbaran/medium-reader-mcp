@@ -23,10 +23,14 @@ export interface RunItem {
   position?: number;
   /** The user has read this author or publication recently (reading history). */
   read: boolean;
-  /** The rater's `skip` verdict, when it rated this item. */
+  /** The classifier's `skip` verdict, when it gave one. */
   rating?: { confidence: number; reason?: string };
-  /** Dropped by the rater (confidence ≥ threshold). */
+  /** The classifier's rank, 0–1 (higher = more wanted), when the backend ranks. */
+  rank?: number;
+  /** Dropped by the classifier (skip confidence ≥ threshold). */
   skipped?: boolean;
+  /** Ranked below the rank floor: listed in one compact line instead of a full row. Still committed and listed in "Also new". */
+  low?: boolean;
   /** Left out of the view to keep it under max_chars. Still committed and listed in "Also new". */
   omitted?: boolean;
 }
@@ -66,7 +70,20 @@ export interface RunFile {
     for_you_dropped: number;
     for_you_range: [number, number];
   };
-  rater: { status: "ok" | "partial" | "unavailable" | "off"; detail?: string; threshold: number; skipped: number };
+  /** The headline classifier's outcome. (Named `rater` for compatibility with older run files.) */
+  rater: {
+    status: "ok" | "partial" | "unavailable" | "off";
+    detail?: string;
+    threshold: number;
+    skipped: number;
+    /** Backend name, e.g. "sampling" or "jev (typesafe/jev-1.13)". */
+    classifier?: string;
+    /** How many items got a rank (0 when the backend doesn't rank). */
+    ranked?: number;
+    /** Rank floor in effect (0 = off) and how many items fell below it. */
+    floor?: number;
+    low?: number;
+  };
   history: { authors: Array<[string, number]>; publications: Array<[string, number]> };
   warnings: string[];
   items: RunItem[];

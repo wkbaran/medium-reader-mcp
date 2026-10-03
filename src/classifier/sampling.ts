@@ -1,17 +1,15 @@
 /**
- * Rating headlines against "conditions" with a confidence per condition.
+ * The sampling backend: rates headlines with the MCP client's own model through
+ * MCP sampling (`sampling/createMessage`), so it needs no key and costs nothing
+ * extra, but it is as slow as that model and its confidences are coarse.
  *
- * The digest uses one condition, `skip`, built from interests.md. The interface
- * is general (any number of named conditions, each with a definition) so a
- * dedicated classifier can replace MCP sampling without changing callers.
+ * `SamplingRater` is the general engine (named conditions → a confidence each),
+ * also behind the `rate_headings` tool. `SamplingClassifier` adapts it to the
+ * `Classifier` interface: it decides the `skip` condition only and doesn't rank.
  */
+import type { Classifier, ClassifyResult, Headline, ReaderProfile } from "./types.js";
 
-export interface RateItem {
-  title: string;
-  subtitle?: string;
-  author?: string;
-  publication?: string;
-}
+export type RateItem = Headline;
 
 export interface Condition {
   /** Short identifier, used as a JSON key: letters, digits, `_` or `-`. */
@@ -238,4 +236,38 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 function short(msg: string): string {
   const one = msg.replace(/\s+/g, " ").trim();
   return one.length > 120 ? one.slice(0, 117) + "…" : one;
+}
+
+/** The `skip` condition, built from the profile's Skip section (with Interests as context). */
+export function skipCondition(p: ReaderProfile | null): Condition | null {
+  if (!p?.skip) return null;
+  return {
+    name: "skip",
+    definition:
+      "The headline is one the reader never wants to see: it matches one of these skip patterns. Judge the intent, not the exact wording " +
+      '("I Tried 20+ C++ Courses on Udemy" matches "I tried N+ courses"). A substantive post on an unlisted topic is NOT a skip.\n' +
+      `Skip patterns:\n${p.skip}` +
+      (p.interests ? `\nFor context, what the reader likes (never skip these for being off-topic):\n${p.interests}` : ""),
+  };
+}
+
+export class SamplingClassifier implements Classifier {
+  readonly name = "sampling";
+  readonly ranks = false;
+  private readonly rater: SamplingRater;
+
+  constructor(sample: SampleFn | null, opts: SamplingRaterOptions = {}) {
+    this.rater = new SamplingRater(sample, opts);
+  }
+
+  async classify(items: readonly Headline[], profile: ReaderProfile, opts: { deadline?: number } = {}): Promise<ClassifyResult> {
+    const condition = skipCondition(profile);
+    if (!condition) return { verdicts: items.map(() => null), unavailable: "interests.md has no Skip section", notes: [] };
+    const r = await this.rater.rate(items, [condition], opts);
+    return {
+      verdicts: r.ratings.map((x) => (x?.skip ? { skip: x.skip.confidence, ...(x.skip.reason ? { reason: x.skip.reason } : {}) } : null)),
+      ...(r.unavailable ? { unavailable: r.unavailable } : {}),
+      notes: r.notes,
+    };
+  }
 }

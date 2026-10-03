@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CreateMessageRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { saveCredentials } from "../src/auth/credentials.js";
 import { DIGEST_MARKER } from "../src/digest/finish.js";
 import { ClientProvider, createServer } from "../src/server.js";
@@ -71,6 +71,7 @@ beforeEach(async () => {
 });
 afterEach(() => {
   process.env = { ...saved };
+  vi.unstubAllGlobals();
 });
 
 describe("digest tools", () => {
@@ -123,11 +124,11 @@ describe("digest tools", () => {
     const view = textOf(begin);
     expect(view).toMatch(/^Medium digest run \d{8}T\d{6}Z · member: yes\nSince: Tue, Sep 29, 6:00 AM MDT \(2026-09-29T12:00:00Z\)/);
     expect(view).toContain("Following: 4 new (1 already reported) · Top picks: 24 (1 dropped) · For you: 74 from positions 25–100 (1 dropped)");
-    expect(view).toContain("Rater: 1 skipped (threshold 70%)");
+    expect(view).toContain("Classifier sampling: 1 skipped (threshold 70%)");
     expect(view).toContain("You read: @fav ×1");
     expect(view).toContain("Interests:\n- Databases");
     expect(view).toMatch(/\nF1 \| Postgres vacuum, explained \| Fav Author \| - \| 4 \| 10 \| R\n/);
-    expect(view).toContain("## Skipped by rater\nF2 I made $10k in a month");
+    expect(view).toContain("## Skipped by classifier\nF2 I made $10k in a month");
     expect(view).not.toMatch(/\nF2 \|/);
     expect(view).toMatch(/\nT1 \| Post b00000000000 \| .* \| follow:Coding\n/);
     expect(view).toContain("## For you\nY1 | Post b00000000019");
@@ -201,7 +202,7 @@ describe("digest tools", () => {
 
     const view = textOf(await client.callTool({ name: "digest_begin", arguments: { for_you_end: 250, following_max: 500 } }));
     expect(view.length).toBeLessThanOrEqual(40_000);
-    expect(view).toContain("Rater: unavailable (the MCP client doesn't support sampling); nothing skipped");
+    expect(view).toContain("Classifier sampling: unavailable (the MCP client doesn't support sampling); nothing skipped");
     expect(view).toContain("Following: 400 new");
     // For you keeps its first 25 before Following is cut below 50.
     expect(view).toMatch(/\(F\d+–F400, Y26–Y225 omitted for size\)/);
@@ -214,10 +215,66 @@ describe("digest tools", () => {
     expect(state.reported_posts).toHaveLength(400);
   });
 
+  it("ranks with Jev: sorts each section best first, applies the rank floor, and still commits everything", async () => {
+    process.env.MEDIUM_READER_CLASSIFIER = "jev";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.MEDIUM_READER_DIGEST_RANK_FLOOR = "0.2";
+    const sent: string[] = [];
+    // Global fetch is only Jev here; Medium goes through the injected fake.
+    vi.stubGlobal("fetch", async (url: string, init: { body: string; headers: Record<string, string> }) => {
+      expect(url).toBe("https://openrouter.ai/api/alpha/decisions");
+      expect(init.headers.Authorization).toBe("Bearer test-key");
+      const t = JSON.parse(init.body).state.headline.title as string;
+      sent.push(t);
+      const score = t.includes("Postgres") ? 3 : t.includes("Kafka") ? 2 : t.includes("$") ? 0 : t.includes("Horoscope") ? 0.3 : 1.2;
+      return new Response(JSON.stringify({ answers: { importance: { type: "score", score }, skip_ctx: { type: "noul", noul: t.includes("$") ? 0.9 : 0.1 } } }));
+    });
+    await writeFile(join(dir, "interests.md"), INTERESTS);
+    await writeFile(join(dir, "state.json"), JSON.stringify({ last_run: "2026-09-29T12:00:00Z", reported_posts: [] }, null, 2) + "\n");
+    const following = [
+      recent(hex("f", 1), { title: "Your Horoscope for Tuesday" }),
+      recent(hex("f", 2), { title: "Kafka consumer lag, measured" }),
+      recent(hex("f", 3), { title: "I made $10k in a month" }),
+      recent(hex("f", 4), { title: "Postgres vacuum, explained" }),
+      recent(hex("f", 5), { title: "Something in between" }),
+    ];
+    const { client } = await connect({ FollowingFeed: followingList(following), RecommendedFeed: forYouList([]), ReadingHistory: history([]) });
+
+    const view = textOf(await client.callTool({ name: "digest_begin", arguments: {} }));
+    expect(sent).toHaveLength(5);
+    expect(view).toContain("Classifier jev (typesafe/jev-1.13): 5 ranked · 1 skipped (threshold 70%) · 1 below rank floor 20%");
+    expect(view).toContain("Columns: ref | rank (0–100");
+    // Best first; the skip and the below-floor post are out of the table.
+    expect(view).toMatch(/## Following\nF4 \| 100 \| Postgres vacuum, explained .*\nF2 \| 67 \| Kafka .*\nF5 \| 40 \| Something in between/);
+    expect(view).toContain("## Skipped by classifier\nF3 I made $10k in a month");
+    expect(view).toContain("## Ranked below 20 (still valid refs)\nF1 Your Horoscope for Tuesday");
+    expect(view).not.toMatch(/\nF1 \|/);
+    expect(view).toContain("rows are best-ranked first");
+
+    const out = textOf(await client.callTool({ name: "digest_finish", arguments: { starred: [{ ref: "F4", gist: "Vacuum.", why: "Depth." }], following: [{ ref: "F1", gist: "Picked anyway." }] } }));
+    expect(out).toContain("COUNTS: 5 new in Following · 2 read in full · 2 also new · 1 skipped · 0 unreadable");
+    const runFile = JSON.parse(await readFile(join(dir, "runs", (await readdir(join(dir, "runs")))[0]!), "utf8"));
+    expect(runFile.rater).toMatchObject({ status: "ok", classifier: "jev (typesafe/jev-1.13)", ranked: 5, skipped: 1, floor: 0.2, low: 1 });
+    expect(runFile.items.find((i: { ref: string }) => i.ref === "F4").rank).toBe(1);
+    const status = textOf(await client.callTool({ name: "digest_status", arguments: {} }));
+    expect(status).toContain("classifier jev (typesafe/jev-1.13) · rank floor 20%");
+  });
+
+  it("falls back to sampling when Jev is chosen without a key, and says so", async () => {
+    process.env.MEDIUM_READER_CLASSIFIER = "jev";
+    delete process.env.OPENROUTER_API_KEY;
+    await writeFile(join(dir, "interests.md"), INTERESTS);
+    await writeFile(join(dir, "state.json"), JSON.stringify({ last_run: "2026-09-29T12:00:00Z", reported_posts: [] }, null, 2) + "\n");
+    const { client } = await connect({ FollowingFeed: followingList([recent(hex("f", 1))]), RecommendedFeed: forYouList([]), ReadingHistory: history([]) }, { sampling: true });
+    const view = textOf(await client.callTool({ name: "digest_begin", arguments: {} }));
+    expect(view).toContain("Classifier sampling: 0 skipped");
+    expect(view).toContain("MEDIUM_READER_CLASSIFIER=jev but OPENROUTER_API_KEY isn't set; used sampling.");
+  });
+
   it("says nothing is new on a quiet day and finishes with [SILENT]", async () => {
     const { client } = await connect({ FollowingFeed: followingList([]), RecommendedFeed: forYouList([]), ReadingHistory: history([]) });
     const view = textOf(await client.callTool({ name: "digest_begin", arguments: {} }));
-    expect(view).toContain("Rater: off (nothing to rate); nothing skipped");
+    expect(view).toContain("Classifier sampling: off (nothing to rate); nothing skipped");
     expect(view).toMatch(/Nothing new\. Call digest_finish with no items\.$/);
     const out = textOf(await client.callTool({ name: "digest_finish", arguments: {} }));
     expect(out.endsWith(`${DIGEST_MARKER}\n[SILENT]`)).toBe(true);
@@ -250,3 +307,4 @@ describe("rate_headings", () => {
     expect(textOf(r)).toMatch(/doesn't support sampling/);
   });
 });
+

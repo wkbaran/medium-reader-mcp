@@ -85,6 +85,11 @@ export function digestSkipThreshold(): number {
   return envNumber("MEDIUM_READER_DIGEST_SKIP_THRESHOLD", 0.7, 0, 1);
 }
 
+/** Rank below which a post is listed in one compact line instead of a full row (0 = off). Only with a ranking classifier. */
+export function digestRankFloor(): number {
+  return envNumber("MEDIUM_READER_DIGEST_RANK_FLOOR", 0, 0, 1);
+}
+
 export const DIGEST_FILES = {
   state: "state.json",
   interests: "interests.md",

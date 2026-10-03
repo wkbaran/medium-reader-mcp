@@ -1,26 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { digestKeep, digestSkipThreshold, digestStyle, digestTimezone } from "../config.js";
+import { classifierFromEnv } from "../classifier/index.js";
+import { samplingFn } from "../classifier/mcp.js";
+import { SamplingRater } from "../classifier/sampling.js";
+import { digestKeep, digestRankFloor, digestSkipThreshold, digestStyle, digestTimezone } from "../config.js";
 import type { ClientProvider } from "../server.js";
 import { errorText, run, text } from "../tool-util.js";
 import { BEGIN_DEFAULTS, digestBegin } from "./collect.js";
 import { digestFinish, digestStatus, markReported } from "./finish.js";
-import { SamplingRater, type SampleFn } from "./rater.js";
-
-/** A SampleFn backed by the connected client's sampling support, or null when it has none. */
-export function samplingFn(server: McpServer): SampleFn | null {
-  if (!server.server.getClientCapabilities()?.sampling) return null;
-  return async ({ systemPrompt, prompt, maxTokens, timeoutMs }) => {
-    // No modelPreferences: Hermes uses a hint's name as the model id, which would
-    // bypass the model configured for this server.
-    const result = await server.server.createMessage(
-      { messages: [{ role: "user", content: { type: "text", text: prompt } }], systemPrompt, maxTokens, temperature: 0, includeContext: "none" },
-      { timeout: timeoutMs },
-    );
-    const blocks = Array.isArray(result.content) ? result.content : [result.content];
-    return blocks.map((b) => (b.type === "text" ? b.text : "")).join("\n");
-  };
-}
 
 /** Accept a JSON string where an array is expected; weaker models send arrays that way. */
 function lenient<T extends z.ZodType>(schema: T) {
@@ -97,8 +84,8 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
     {
       title: "Start a digest run",
       description:
-        "Step 1 of the daily digest. Collects posts new since the last digest (Following, Medium's top picks, For you), drops ones already reported and ones the rater marks as skip, " +
-        "and returns a plain-text work list with refs (F1, T1, Y1). Saves nothing but a run file; call digest_finish to commit. Call it once, with no arguments.",
+        "Step 1 of the daily digest. Collects posts new since the last digest (Following, Medium's top picks, For you), drops ones already reported, " +
+        "has the headline classifier rank them and drop confident skips, and returns a plain-text work list with refs (F1, T1, Y1). Saves nothing but a run file; call digest_finish to commit. Call it once, with no arguments.",
       inputSchema: {
         since: z.string().optional().describe('Override the start point: ISO time or "48h". Default: last_run from the state file.'),
         following_max: z.number().int().min(1).max(500).default(BEGIN_DEFAULTS.following_max),
@@ -114,11 +101,14 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
     (args) =>
       run(async () => {
         const client = await provider.get();
+        const { classifier, warning } = classifierFromEnv("MEDIUM_READER", samplingFn(server));
+        const tz = digestTimezone();
         const { view } = await digestBegin(args, {
           client,
           dir,
-          rater: new SamplingRater(samplingFn(server)),
-          tz: digestTimezone(),
+          classifier,
+          rankFloor: digestRankFloor(),
+          tz: warning ? { ...tz, warning: [tz.warning, warning].filter(Boolean).join(" ") } : tz,
           style: digestStyle(),
           threshold: digestSkipThreshold(),
         });
@@ -170,7 +160,16 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
     },
     () =>
       run(async () =>
-        text(await digestStatus(dir, { tz: digestTimezone().tz, style: digestStyle(), keep: digestKeep(), threshold: digestSkipThreshold() })),
+        text(
+          await digestStatus(dir, {
+            tz: digestTimezone().tz,
+            style: digestStyle(),
+            keep: digestKeep(),
+            threshold: digestSkipThreshold(),
+            classifier: classifierFromEnv("MEDIUM_READER", samplingFn(server)).classifier.name,
+            rankFloor: digestRankFloor(),
+          }),
+        ),
       ),
   );
 
@@ -193,3 +192,4 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
       }),
   );
 }
+
