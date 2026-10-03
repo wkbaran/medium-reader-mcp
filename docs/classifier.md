@@ -32,6 +32,10 @@ Ranking matters more than skipping. A post ranked low is effectively filtered: t
 
 Choose with `MEDIUM_READER_CLASSIFIER=jev | sampling | off`. `jev` without a key falls back to `sampling` and says so in the work list's warnings. Pin the Jev version with `MEDIUM_READER_JEV_MODEL` (default `typesafe/jev-1.13`): thresholds are tuned against a specific version.
 
+**What "sampling" means.** MCP sampling is a protocol feature: the server sends a prompt back to the MCP client (`sampling/createMessage`), and the client runs it on its own LLM. The server needs no model or key of its own. In Hermes, that model is `auxiliary.mcp`, or `mcp_servers.<name>.sampling.model` for one server. The name is LLM jargon: generating text is "sampling" tokens from a model.
+
+**Who ranks with `sampling`.** The sampling backend only decides skips. The server doesn't sort the list, so prioritizing is left to the agent's model when it shortlists and picks ⭐ posts. That's how the digest ran before Jev, and why picks were already personal. With `jev`, the server ranks, and the agent starts from a sorted list.
+
 Jev gets one request per headline. It judges one input against several questions, so headlines can't be batched into one prompt. The request carries your Interests and Skip bullets plus the headline, and asks two questions:
 
 - `importance`: a 4-level Score from "not for this reader" to "must read". Its probability-weighted position becomes the rank.
@@ -47,7 +51,7 @@ mcp_servers:
     env:
       MEDIUM_READER_DIGEST_DIR: /opt/data/sandbox/medium_digest
       MEDIUM_READER_CLASSIFIER: jev
-      OPENROUTER_API_KEY: sk-or-…
+      OPENROUTER_API_KEY: ${JEV_OPENROUTER_API_KEY}   # set in Hermes's .env; a separate name keeps Hermes itself from using it
       # MEDIUM_READER_DIGEST_SKIP_THRESHOLD: 0.7   # from analyze.mjs
       # MEDIUM_READER_DIGEST_RANK_FLOOR: 0.1       # only if analyze.mjs recommends one
 ```

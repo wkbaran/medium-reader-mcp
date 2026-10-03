@@ -27,7 +27,7 @@ Common mistakes and confusion points in this project. Add to this list when some
   - One `get_feed` call returns at most 100 posts. Following `nextCursor` about ten times reaches the end.
   - Position matters: 0–25 are high-clap posts about 22 days old, varied across the user's topics. 25–250 have the most authors the user follows or has read. 500 and beyond are fresh, low-clap posts that network activity pulled in.
   - `reasonString` is things like "Because you follow Coding", "Selected for you", "Based on your reading history", "From your network", "*Name* clapped".
-  - Full table in README.md, "How Medium's feeds behave".
+  - Full table in docs/feeds.md.
 - Some IDs are typed `ID!`, not `String!`, even when they look like strings (`collectionByDomainOrSlug(domainOrSlug:)`, `catalogById(catalogId:)`). The wrong type is a validation error, not a coercion.
 - Lists are "catalogs":
   - The reading list is `getPredefinedCatalog(userId, type: READING_LIST)`, whose id looks like `predefined:<userId>:READING_LIST`. Named lists come from `catalogsByUser(type: LISTS)` and `catalogById`.
