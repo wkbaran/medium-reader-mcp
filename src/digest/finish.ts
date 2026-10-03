@@ -205,7 +205,10 @@ function countsLine(run: RunFile, c: ReturnType<typeof renderDigest>["counts"]):
   return `COUNTS: ${run.counts.following_new} new in Following · ${c.readInFull} read in full · ${c.alsoNew} also new · ${c.skipped} skipped · ${c.unreadable} unreadable`;
 }
 
-export async function digestStatus(dir: string, config: { tz: string; style: string; keep: number; threshold: number }): Promise<string> {
+export async function digestStatus(
+  dir: string,
+  config: { tz: string; style: string; keep: number; threshold: number; classifier?: string; rankFloor?: number },
+): Promise<string> {
   const loaded = await loadState(dir);
   const lines: string[] = [];
   if (loaded.status === "ok") {
@@ -218,7 +221,11 @@ export async function digestStatus(dir: string, config: { tz: string; style: str
   } else {
     lines.push(loaded.status === "missing" ? "State: no state.json yet (the next run covers the last 24 hours)." : `State: ${loaded.warning}`);
   }
-  lines.push(`Config: dir ${dir} · tz ${config.tz} · style ${config.style} · keep ${config.keep} · skip threshold ${Math.round(config.threshold * 100)}%`);
+  lines.push(
+    `Config: dir ${dir} · tz ${config.tz} · style ${config.style} · keep ${config.keep} · skip threshold ${Math.round(config.threshold * 100)}%` +
+      (config.classifier ? ` · classifier ${config.classifier}` : "") +
+      (config.rankFloor ? ` · rank floor ${Math.round(config.rankFloor * 100)}%` : ""),
+  );
   const ids = (await listRunIds(dir)).reverse().slice(0, 5);
   if (!ids.length) {
     lines.push("Runs: none yet.");

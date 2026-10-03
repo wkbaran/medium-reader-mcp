@@ -1,7 +1,7 @@
 import type { MediumClient, PostSummary, RankedPost } from "../medium/api.js";
 import { parseSince } from "../tool-util.js";
-import { loadInterests, skipCondition, type Interests } from "./interests.js";
-import type { TitleRater } from "./rater.js";
+import { classifySafely, type Classifier } from "../classifier/index.js";
+import { loadInterests, type Interests } from "./interests.js";
 import { cut, formatClaps, formatLocal, shortReason } from "./render.js";
 import { isoSeconds, loadState, newRunId, pruneRuns, writeRun } from "./state.js";
 import { POOL_PREFIX, type Pool, type RunFile, type RunItem } from "./types.js";
@@ -33,12 +33,14 @@ export const FOR_YOU_START = 25;
 export interface BeginDeps {
   client: MediumClient;
   dir: string;
-  rater: TitleRater;
+  classifier: Classifier;
+  /** Items ranked below this are listed compactly (0 = off). */
+  rankFloor?: number;
   tz: { tz: string; warning?: string };
   style: RunFile["style"];
   threshold: number;
   now?: () => Date;
-  /** Total time digest_begin may spend before the rater stops (fetching included). */
+  /** Total time digest_begin may spend before the classifier stops (fetching included). */
   budgetMs?: number;
 }
 
@@ -102,34 +104,47 @@ export async function digestBegin(opts: BeginOptions, deps: BeginDeps): Promise<
     ...toItems("for_you", forYouNew, isRead),
   ];
 
-  // Rate titles; drop the ones the rater is confident the user wants skipped.
+  // Classify headlines: rank them (when the backend ranks) and drop confident skips.
   const interests = await loadInterests(deps.dir);
-  const condition = skipCondition(interests);
+  const c = deps.classifier;
+  const floor = c.ranks ? (deps.rankFloor ?? 0) : 0;
+  const base = { threshold: deps.threshold, skipped: 0, classifier: c.name, ranked: 0, floor, low: 0 };
   let rater: RunFile["rater"];
   if (!items.length) {
-    rater = { status: "off", detail: "nothing to rate", threshold: deps.threshold, skipped: 0 };
-  } else if (!condition) {
-    rater = { status: "off", detail: interests ? "interests.md has no Skip section" : "no interests.md", threshold: deps.threshold, skipped: 0 };
+    rater = { ...base, status: "off", detail: "nothing to rate" };
+  } else if (!interests || (!interests.skip && !(c.ranks && interests.interests))) {
+    rater = { ...base, status: "off", detail: !interests ? "no interests.md" : "interests.md has no Skip section" };
   } else {
-    const deadline = startedAt.getTime() + (deps.budgetMs ?? 170_000);
-    const result = await deps.rater.rate(
+    // The classifier keeps real time, so hand it the time left rather than a timestamp on deps.now's clock.
+    const deadline = Date.now() + (startedAt.getTime() + (deps.budgetMs ?? 170_000) - now().getTime());
+    const result = await classifySafely(
+      c,
       items.map((i) => ({ title: i.title, subtitle: i.subtitle, author: i.author, publication: i.publication })),
-      [condition],
+      interests,
       { deadline },
     );
-    let skipped = 0;
-    result.ratings.forEach((r, n) => {
-      const v = r?.skip;
+    result.verdicts.forEach((v, n) => {
       if (!v) return;
-      items[n]!.rating = v;
-      if (v.confidence >= deps.threshold) {
-        items[n]!.skipped = true;
-        skipped++;
+      const item = items[n]!;
+      if (v.skip !== undefined) {
+        item.rating = { confidence: v.skip, ...(v.reason ? { reason: v.reason } : {}) };
+        if (v.skip >= deps.threshold) {
+          item.skipped = true;
+          base.skipped++;
+        }
+      }
+      if (v.rank !== undefined) {
+        item.rank = v.rank;
+        base.ranked++;
+        if (!item.skipped && floor > 0 && v.rank < floor) {
+          item.low = true;
+          base.low++;
+        }
       }
     });
     rater = result.unavailable
-      ? { status: "unavailable", detail: result.unavailable, threshold: deps.threshold, skipped: 0 }
-      : { status: result.notes.length ? "partial" : "ok", detail: result.notes.join("; ") || undefined, threshold: deps.threshold, skipped };
+      ? { ...base, status: "unavailable", detail: result.unavailable, skipped: 0, ranked: 0, low: 0 }
+      : { ...base, status: result.notes.length ? "partial" : "ok", ...(result.notes.length ? { detail: result.notes.join("; ") } : {}) };
   }
 
   const runId = await newRunId(deps.dir, startedAt);
@@ -207,18 +222,23 @@ function topCounts(m: Map<string, number>, n = 8): Array<[string, number]> {
 
 // ---- the view digest_begin returns ----
 
-function itemLine(i: RunItem): string {
+function itemLine(i: RunItem, ranked: boolean): string {
   const flags = [i.memberOnly ? "M" : "", i.read ? "R" : ""].join("") || "-";
   const cols = [i.ref, cut(i.title, 90), i.author ?? "-", i.publication ?? "-", i.minutes ?? "-", formatClaps(i.claps), flags];
+  if (ranked) cols.splice(1, 0, i.rank === undefined ? "-" : String(Math.round(i.rank * 100)));
   if (i.pool !== "following") cols.push(shortReason(i.reason) ?? "-");
   return cols.join(" | ");
 }
 
 export function raterLine(r: RunFile["rater"]): string {
-  const pct = `${Math.round(r.threshold * 100)}%`;
-  if (r.status === "off") return `Rater: off (${r.detail}); nothing skipped`;
-  if (r.status === "unavailable") return `Rater: unavailable (${r.detail}); nothing skipped`;
-  return `Rater: ${r.skipped} skipped (threshold ${pct})${r.status === "partial" ? `; ${r.detail}` : ""}`;
+  const pct = (n: number) => `${Math.round(n * 100)}%`;
+  const who = r.classifier ? `Classifier ${r.classifier}` : "Rater";
+  if (r.status === "off") return `${who}: off (${r.detail}); nothing skipped`;
+  if (r.status === "unavailable") return `${who}: unavailable (${r.detail}); nothing skipped`;
+  const parts = [`${r.skipped} skipped (threshold ${pct(r.threshold)})`];
+  if (r.ranked) parts.unshift(`${r.ranked} ranked`);
+  if (r.floor) parts.push(`${r.low ?? 0} below rank floor ${pct(r.floor)}`);
+  return `${who}: ${parts.join(" · ")}${r.status === "partial" ? `; ${r.detail}` : ""}`;
 }
 
 /**
@@ -240,21 +260,36 @@ export function renderView(run: RunFile, interests: Interests | null, maxChars: 
   if (interests?.interests) head.push(`Interests:\n${cut3000(interests.interests)}`);
   if (run.warnings.length) head.push(`Warnings: ${run.warnings.join(" ")}`);
 
-  const visible = run.items.filter((i) => !i.skipped);
-  if (!visible.length) return [...head, "", "Nothing new. Call digest_finish with no items."].join("\n");
+  const ranked = Boolean(run.rater.ranked);
+  // Ranked runs list each section best first, so the size cut below drops the lowest-ranked rows.
+  // Unranked items (the classifier failed on them) sit in the middle rather than at either end.
+  const byRank = (list: RunItem[]) => (ranked ? [...list].sort((a, b) => (b.rank ?? 0.5) - (a.rank ?? 0.5)) : list);
+  const visible = byRank(run.items.filter((i) => !i.skipped && !i.low));
+  const low = byRank(run.items.filter((i) => i.low));
+  if (!visible.length && !low.length) return [...head, "", "Nothing new. Call digest_finish with no items."].join("\n");
 
-  head.push("Columns: ref | title | author | publication | minutes | claps | flags (M member-only, R you read this author/publication) [| reason]");
+  head.push(
+    `Columns: ref${ranked ? " | rank (0–100, the classifier's guess at how much you'd want it; rows are sorted by it)" : ""} | title | author | publication | minutes | claps | flags (M member-only, R you read this author/publication) [| reason]`,
+  );
   const sections: Array<{ title: string; items: RunItem[] }> = [
     { title: "## Following", items: visible.filter((i) => i.pool === "following") },
     { title: "## Top picks", items: visible.filter((i) => i.pool === "top") },
     { title: "## For you", items: visible.filter((i) => i.pool === "for_you") },
   ];
   const skipped = run.items.filter((i) => i.skipped);
-  let skippedText = skipped.length ? `## Skipped by rater\n${skipped.map((i) => `${i.ref} ${cut(i.title, 50)}`).join(" · ")}` : "";
-  if (skippedText.length > 4000) skippedText = skippedText.slice(0, 3990).replace(/ · [^·]*$/, "") + " · …";
-  const tail = "Next: shortlist ≤10 F, ≤5 T, ≤10 Y refs; read them with subagents (read_post accepts the ref); then call digest_finish.";
+  const compact = (title: string, list: RunItem[]) => {
+    const t = list.length ? `${title}\n${list.map((i) => `${i.ref} ${cut(i.title, 50)}`).join(" · ")}` : "";
+    return t.length > 4000 ? t.slice(0, 3990).replace(/ · [^·]*$/, "") + " · …" : t;
+  };
+  const skippedText = [compact("## Skipped by classifier", skipped), compact(`## Ranked below ${Math.round((run.rater.floor ?? 0) * 100)} (still valid refs)`, low)]
+    .filter(Boolean)
+    .join("\n");
+  const tail =
+    "Next: shortlist ≤10 F, ≤5 T, ≤10 Y refs" +
+    (ranked ? " (rows are best-ranked first; prefer them unless a lower one clearly fits the Interests better)" : "") +
+    "; read them with subagents (read_post accepts the ref); then call digest_finish.";
 
-  const lines = new Map(run.items.map((i) => [i.ref, itemLine(i)]));
+  const lines = new Map(run.items.map((i) => [i.ref, itemLine(i, ranked)]));
   const reserve = "(F999–F999, Y999–Y999 omitted for size)".length + 1;
   let size =
     [...head, skippedText, tail].join("\n").length +

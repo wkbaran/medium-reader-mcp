@@ -6,7 +6,7 @@ import { countWords, markdownToText, paragraphsToMarkdown } from "./format.js";
 import { MAX_CLAPS, MediumClient, READING_LIST, type FullPost } from "./medium/api.js";
 import { digestDir } from "./config.js";
 import { isDigestRef, resolveReadRef } from "./digest/finish.js";
-import { registerDigestTools, registerRateHeadings } from "./digest/tools.js";
+import { registerDigestTools, registerInterestTools, registerRateHeadings } from "./digest/tools.js";
 import { MediumHttp, type FetchLike } from "./medium/http.js";
 import { json, run, text } from "./tool-util.js";
 
@@ -14,7 +14,7 @@ import { parseSince } from "./tool-util.js";
 
 export { parseSince };
 
-const VERSION = "0.2.1";
+const VERSION = "0.3.0";
 
 /**
  * Hands out a client for the current credentials. Credentials are re-read on
@@ -377,6 +377,7 @@ export function createServer(provider = new ClientProvider()): McpServer {
   );
 
   registerRateHeadings(server);
+  registerInterestTools(server, provider, digest);
   if (digest) registerDigestTools(server, provider, digest);
 
   return server;

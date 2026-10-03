@@ -1,7 +1,7 @@
 ---
 name: medium-digest
 description: Daily Medium digest in three sections (the Following feed, Medium's top picks, and personal "For you" recommendations), with picks read in full by subagents. Uses the medium-reader MCP server's digest tools.
-version: 2.1.0
+version: 2.2.0
 platforms: [linux]
 metadata:
   hermes:
@@ -23,7 +23,7 @@ Everything else is configured on the medium-reader MCP server (see its README): 
 Scheduled (cron) or on request: "what's new on Medium", "Medium digest", "anything worth reading on Medium?".
 
 ## How it works
-The server does everything that isn't judgment: fetching the feeds, paging, dropping posts already reported, dropping clickbait titles (rated by a model against the Skip section of `interests.md`), time zones, laying out the final message, and saving state. You shortlist, have subagents read, pick the best, and hand your picks back. The server's reply contains the finished digest.
+The server does everything that isn't judgment: fetching the feeds, paging, dropping posts already reported, classifying headlines against the user's `interests.md` (ranking them and dropping clear skips), time zones, laying out the final message, and saving state. You shortlist, have subagents read, pick the best, and hand your picks back. The server's reply contains the finished digest.
 
 ## Tools
 - medium-reader MCP tools: `digest_begin`, `read_post`, `digest_finish`. They may be listed with an `mcp_medium_reader_` prefix. `digest_status` is only for debugging.
@@ -39,14 +39,15 @@ Call `digest_begin` once, with no arguments.
 - If the result ends with "Nothing new", call `digest_finish` with no arguments and go to step 6.
 - If it fails for another reason, call it once more. If that fails too, reply only: "📰 Medium digest failed: <the error>".
 
-The result is a work list. Each post has a ref (`F` = Following, `T` = Medium's top picks, `Y` = For you), then title, author, publication, minutes, claps, flags (`M` member-only, `R` the user has recently read this author or publication) and, for T and Y, why Medium showed it. It also shows the user's interests.
+The result is a work list. Each post has a ref (`F` = Following, `T` = Medium's top picks, `Y` = For you), then, when the server's classifier ranks, a rank from 0 to 100 (rows are sorted by it, best first), then title, author, publication, minutes, claps, flags (`M` member-only, `R` the user has recently read this author or publication) and, for T and Y, why Medium showed it. It also shows the user's interests.
 
 ### 2. Shortlist (from the work list only)
-- **Following:** up to **10** F refs, at most 3 per publication. Rank up `R` and the user's interests, and substantive topics. Rank down listicles, money talk and near-duplicate headlines.
+- **If there's a rank column, start from the top of each section.** The rank already reflects the user's interests and skips. Go further down only for a post that clearly fits the interests better than what's above it, and say nothing about the ranks in the digest. Posts listed under "Ranked below" are valid refs but rarely worth it.
+- **Following:** up to **10** F refs, at most 3 per publication. Prefer `R`, the user's interests and substantive topics; pass over near-duplicate headlines.
 - **Top picks:** up to **5** T refs.
 - **For you:** up to **10** Y refs. Rank up reason `history` and `R`.
 - If a pool is weak, pick fewer. Don't pad.
-- If you see clear clickbait the rater missed, note its ref for `extra_skipped` and don't shortlist it.
+- If you see clear clickbait the classifier missed, note its ref for `extra_skipped` and don't shortlist it.
 
 ### 3. Read the shortlist with subagents
 Split the shortlisted refs into chunks of **5**. Call `delegate_task` with `tasks=[…]` of **at most `MAX_PARALLEL` tasks per call**, and keep calling it until every chunk is done. Give each task this goal, with its refs listed exactly as `digest_begin` gave them (never renumbered):

@@ -1,26 +1,18 @@
+import { readFile } from "node:fs/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { digestKeep, digestSkipThreshold, digestStyle, digestTimezone } from "../config.js";
+import { renderEvidence } from "../classifier/evidence.js";
+import { classifierFromEnv } from "../classifier/index.js";
+import { proposalSummary, tidyProposal } from "../classifier/proposal.js";
+import { samplingFn } from "../classifier/mcp.js";
+import { SamplingRater } from "../classifier/sampling.js";
+import { digestKeep, digestRankFloor, digestSkipThreshold, digestStyle, digestTimezone } from "../config.js";
 import type { ClientProvider } from "../server.js";
 import { errorText, run, text } from "../tool-util.js";
 import { BEGIN_DEFAULTS, digestBegin } from "./collect.js";
+import { gatherEvidence } from "./evidence.js";
 import { digestFinish, digestStatus, markReported } from "./finish.js";
-import { SamplingRater, type SampleFn } from "./rater.js";
-
-/** A SampleFn backed by the connected client's sampling support, or null when it has none. */
-export function samplingFn(server: McpServer): SampleFn | null {
-  if (!server.server.getClientCapabilities()?.sampling) return null;
-  return async ({ systemPrompt, prompt, maxTokens, timeoutMs }) => {
-    // No modelPreferences: Hermes uses a hint's name as the model id, which would
-    // bypass the model configured for this server.
-    const result = await server.server.createMessage(
-      { messages: [{ role: "user", content: { type: "text", text: prompt } }], systemPrompt, maxTokens, temperature: 0, includeContext: "none" },
-      { timeout: timeoutMs },
-    );
-    const blocks = Array.isArray(result.content) ? result.content : [result.content];
-    return blocks.map((b) => (b.type === "text" ? b.text : "")).join("\n");
-  };
-}
+import { insideDir, writeAtomic } from "./state.js";
 
 /** Accept a JSON string where an array is expected; weaker models send arrays that way. */
 function lenient<T extends z.ZodType>(schema: T) {
@@ -97,8 +89,8 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
     {
       title: "Start a digest run",
       description:
-        "Step 1 of the daily digest. Collects posts new since the last digest (Following, Medium's top picks, For you), drops ones already reported and ones the rater marks as skip, " +
-        "and returns a plain-text work list with refs (F1, T1, Y1). Saves nothing but a run file; call digest_finish to commit. Call it once, with no arguments.",
+        "Step 1 of the daily digest. Collects posts new since the last digest (Following, Medium's top picks, For you), drops ones already reported, " +
+        "has the headline classifier rank them and drop confident skips, and returns a plain-text work list with refs (F1, T1, Y1). Saves nothing but a run file; call digest_finish to commit. Call it once, with no arguments.",
       inputSchema: {
         since: z.string().optional().describe('Override the start point: ISO time or "48h". Default: last_run from the state file.'),
         following_max: z.number().int().min(1).max(500).default(BEGIN_DEFAULTS.following_max),
@@ -114,11 +106,14 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
     (args) =>
       run(async () => {
         const client = await provider.get();
+        const { classifier, warning } = classifierFromEnv("MEDIUM_READER", samplingFn(server));
+        const tz = digestTimezone();
         const { view } = await digestBegin(args, {
           client,
           dir,
-          rater: new SamplingRater(samplingFn(server)),
-          tz: digestTimezone(),
+          classifier,
+          rankFloor: digestRankFloor(),
+          tz: warning ? { ...tz, warning: [tz.warning, warning].filter(Boolean).join(" ") } : tz,
           style: digestStyle(),
           threshold: digestSkipThreshold(),
         });
@@ -170,7 +165,16 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
     },
     () =>
       run(async () =>
-        text(await digestStatus(dir, { tz: digestTimezone().tz, style: digestStyle(), keep: digestKeep(), threshold: digestSkipThreshold() })),
+        text(
+          await digestStatus(dir, {
+            tz: digestTimezone().tz,
+            style: digestStyle(),
+            keep: digestKeep(),
+            threshold: digestSkipThreshold(),
+            classifier: classifierFromEnv("MEDIUM_READER", samplingFn(server)).classifier.name,
+            rankFloor: digestRankFloor(),
+          }),
+        ),
       ),
   );
 
@@ -190,6 +194,60 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
       run(async () => {
         const r = await markReported(dir, args, { keep: digestKeep() });
         return r.ok ? text(r.text) : errorText(r.text);
+      }),
+  );
+}
+
+/**
+ * interests_evidence (read-only, always) and save_interests_proposal (digest mode only):
+ * the calling agent drafts a proposed interests.md from the reader's own activity.
+ */
+export function registerInterestTools(server: McpServer, provider: ClientProvider, dir: string | undefined): void {
+  server.registerTool(
+    "interests_evidence",
+    {
+      title: "Evidence for interests.md",
+      description:
+        "Read-only. Gathers what the user's own Medium activity says about their taste (reading lists, followed publications, the digest's picks, hand labels, reading history), " +
+        "with rules for turning it into a proposed interests.md for the digest's headline classifier. Draft the proposal from it; don't change interests.md without asking.",
+      inputSchema: {
+        history: z.number().int().min(0).max(200).default(120).describe("Reading-history posts to include (weak evidence)."),
+        list_items: z.number().int().min(0).max(200).default(100).describe("Reading-list posts to include across all lists."),
+        labels: z
+          .enum(["all", "train"])
+          .default("all")
+          .describe('"train" includes only the half of the hand labels reserved for drafting, so the proposal can be tested on the other half (analyze.mjs --test-half).'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    ({ history, list_items, labels }) =>
+      run(async () => {
+        const client = await provider.get();
+        return text(renderEvidence(await gatherEvidence(client, dir, { history, listItems: list_items, labels })));
+      }),
+  );
+
+  if (!dir) return;
+  server.registerTool(
+    "save_interests_proposal",
+    {
+      title: "Save an interests.md proposal",
+      description:
+        "Save a proposed interests.md as interests.proposed.md in the digest directory, replacing any earlier proposal. interests.md itself is never changed. " +
+        "Returns what differs from the current file. The user adopts it by renaming the file, ideally after comparing both with tools/classifier.",
+      inputSchema: {
+        text: z.string().min(20).max(20_000).describe('The complete proposed file, with "## Interests" and "## Skip" sections. Anything from a "Changes and why" line on is dropped.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    ({ text: proposal }) =>
+      run(async () => {
+        const tidy = tidyProposal(proposal);
+        if (!tidy.ok) return errorText(tidy.error);
+        const current = await readFile(await insideDir(dir, "interests.md"), "utf8").catch(() => "");
+        const file = await insideDir(dir, "interests.proposed.md");
+        await writeAtomic(file, tidy.text);
+        return text(`Saved ${file}. interests.md is unchanged.\n${proposalSummary(current, tidy.text)}`);
       }),
   );
 }
