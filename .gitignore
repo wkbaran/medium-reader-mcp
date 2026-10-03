@@ -7,3 +7,5 @@ coverage/
 auth.json
 cookies.json
 browser-profile/
+.env
+classifier-data/
