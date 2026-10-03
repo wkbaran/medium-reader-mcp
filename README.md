@@ -144,8 +144,11 @@ Authors can be given as `@username` or a profile URL; publications by name, slug
 | `get_list` | The posts in one of those lists |
 | `get_reading_history` | Posts you've read, most recently read first. Medium gives no read date per post. Useful for asking which follows you actually read |
 | `rate_headings` | Rates headlines against conditions you define (up to 5, each with a definition), with a confidence and a short reason per condition. Uses your MCP client's own model through sampling, so it only works in clients that support sampling |
+| `interests_evidence` | What your own activity says about your taste (reading lists, follows, history, and with the digest on, its picks and your labels), with rules for drafting an `interests.md` from it. See [Proposing an interests.md](docs/classifier.md#proposing-an-interestsmd-from-your-activity) |
 
 ### Digest (only when `MEDIUM_READER_DIGEST_DIR` is set)
+
+`save_interests_proposal` saves a drafted `interests.md` as `interests.proposed.md` beside the real one, which it never changes. The digest tools:
 
 Built for scheduled digests run by an agent harness such as [Hermes Agent](#hermes-agent) ([why](#why-this-server-has-tools-just-for-agent-harnesses)). They return plain text.
 
@@ -197,7 +200,7 @@ A general MCP server makes an account readable by any agent. A few tools shaped 
 
 The server does the mechanical work through four digest tools, so the agent's model only judges what to read and what's worth it:
 
-1. `digest_begin` fetches everything new since the last digest, drops posts it has already reported, has a model rate every title against the **Skip** section of your `interests.md` (through MCP sampling, so the client's model does it) and drops the confident skips. It returns a compact plain-text list with a ref per post (`F3`, `T1`, `Y12`) and saves a run file; nothing else is written.
+1. `digest_begin` fetches everything new since the last digest, drops posts it has already reported, and runs the [headline classifier](#headline-classifier) against your `interests.md`: it drops confident skips and, with a ranking backend, sorts what's left best first. It returns a compact plain-text list with a ref per post (`F3`, `T1`, `Y12`) and saves a run file; nothing else is written.
 2. The agent shortlists refs, and subagents read them with `read_post`, which accepts the refs.
 3. `digest_finish` takes the agent's picks by ref, checks them, lays out the final Discord message, and saves state (every Following post plus every post it named). The agent replies with that message as is.
 
@@ -220,11 +223,13 @@ The server does the mechanical work through four digest tools, so the agent's mo
          MEDIUM_READER_HOME: /opt/data/mcp/medium-reader-home
          MEDIUM_READER_DIGEST_DIR: /opt/data/sandbox/medium_digest
          MEDIUM_READER_DIGEST_TZ: America/Denver
-       sampling:            # the title rater; Hermes enables sampling by default
+         # MEDIUM_READER_CLASSIFIER: jev     # optional ranking classifier; see "Headline classifier"
+         # OPENROUTER_API_KEY: sk-or-…
+       sampling:            # the default classifier; Hermes enables sampling by default
          model: <a local model>   # optional: overrides auxiliary.mcp.model for this server
          timeout: 120             # seconds per request; Hermes's default of 30 is short for a local model
    ```
-   Sampling requests go to the provider in `auxiliary.mcp` (`provider`, `model`) unless `sampling.model` overrides the model. A cheap local model is enough: it only rates headlines, about 40 per request.
+   Sampling requests go to the provider in `auxiliary.mcp` (`provider`, `model`) unless `sampling.model` overrides the model. A cheap local model is enough: it only rates headlines, about 40 per request. With `MEDIUM_READER_CLASSIFIER: jev`, sampling isn't used for the digest.
 5. **Install the skill:** copy `hermes/SKILL.md` to `$HERMES_HOME/skills/productivity/medium-digest/SKILL.md`, and `hermes/medium_digest_start.sh` to `$HERMES_HOME/scripts/`. Edit the Settings block at the top of `SKILL.md`: `MAX_PARALLEL` and the `REAUTH` message.
 6. **Restart Hermes and schedule it.** Cron times are in the Hermes host's local time. The job needs only the `delegation` and `medium-reader` toolsets; it uses no file tools:
    ```bash
@@ -236,7 +241,7 @@ The server does the mechanical work through four digest tools, so the agent's mo
 
 #### Customizing
 
-- **What gets picked:** `interests.md` in the digest directory has two sections. **Interests** is shown to the agent when it shortlists. **Skip** lists title patterns to drop entirely, for example "I tried N+ courses" or "passive income"; a model rates each title against it by intent, not exact words, and titles it rates at 70% or more (`MEDIUM_READER_DIGEST_SKIP_THRESHOLD`) never reach the agent. The digest ends with a count of skipped posts and names the authors or publications behind most of them, so you can mute them. There's no built-in skip list.
+- **What gets picked:** `interests.md` in the digest directory has two sections. **Interests** describes what you want more of; it's shown to the agent when it shortlists and is what the classifier ranks against. **Skip** lists kinds of post to drop entirely, for example "I tried N+ courses"; the classifier judges them by intent, not exact words, and posts it rates at 70% or more (`MEDIUM_READER_DIGEST_SKIP_THRESHOLD`) never reach the agent. The digest ends with a count of skipped posts and names the authors or publications behind most of them, so you can mute them. There's no built-in skip list. To check that the file says what you mean, label some of your own headlines and let the tools recommend changes: see [Headline classifier](#headline-classifier).
 - **Sizes:** the shortlist sizes (up to 10 from Following, 5 top picks, 10 from "For you", chunks of 5 per subagent) are plain instructions in the skill's Procedure. How much is fetched is set by `digest_begin`'s arguments; the defaults match the numbers above.
 - **Output format:** `MEDIUM_READER_DIGEST_STYLE=markdown` drops the Discord-specific `<…>` around masked links. The layout itself is in `src/digest/render.ts`.
 - **Schedule and delivery:** use `hermes cron edit <job-id> --schedule "…"` or `--deliver …`.
@@ -245,13 +250,24 @@ The server does the mechanical work through four digest tools, so the agent's mo
 
 - **State:** `state.json` in the digest directory holds `last_run` and the ids of every post reported, oldest first, trimmed to the newest 3,000 (`MEDIUM_READER_DIGEST_KEEP`). Only `digest_finish` and `mark_reported` write it: under a lock file, via a temporary file and a rename, with the previous version kept as `state.json.bak`. If a run dies before `digest_finish`, nothing is saved and the next run covers the same period. `last_run` is the server's clock when `digest_begin` started, and it never moves backwards.
 - **Repairs:** `digest_status` shows the state and the last runs, and whether each was committed. `mark_reported` adds ids (or URLs, or refs from the latest run) and can move `last_run` forward.
-- **Run files:** each `digest_begin` writes `runs/<run_id>.json` with every post it considered, the rater's verdicts and, once finished, the picks. The newest 14 are kept. Refs (`F3`) always refer to the latest run.
-- **If the rater can't run** (the client doesn't support sampling, the model errors or times out, or returns something unparseable), nothing is skipped and `digest_begin` says so. The whole call stays under about three minutes, so a slow model leaves the remaining titles unrated rather than timing the tool out.
+- **Run files:** each `digest_begin` writes `runs/<run_id>.json` with every post it considered, the classifier's verdicts and, once finished, the picks. The newest 14 are kept. Refs (`F3`) always refer to the latest run.
+- **If the classifier can't run** (no sampling support or API key, the model errors or times out, or returns something unparseable), nothing is skipped or ranked and `digest_begin` says so. The whole call stays under about three minutes, so a slow model leaves the remaining titles unrated rather than timing the tool out.
 - **Tool results stay under 40,000 characters.** Hermes saves results over about 50,000 to a file the model can't parse. On a very large day `digest_begin` leaves the tail of "For you", then of Following, out of the list and says which refs; omitted Following posts are still saved as reported and listed under "Also new".
 - **"For you" is read only to position 150 by default, and never past 250.** Paging to the end of that list (about 1,000 posts) makes Medium replace the list your homepage shows.
 - **A post that couldn't be read** is listed under ⚠ and saved as reported; it isn't retried.
 - **Read-only:** the skill never uses the tools that change your account.
 - **Your own account:** this server uses Medium's undocumented web API with your session cookies. A daily digest is light, read-only use, but if Medium objects to automated access, it's your account at risk.
+
+## Headline classifier
+
+Before any model reads a post, a classifier decides which headlines matter to you: it **ranks** every new headline against your `interests.md` and **drops** the ones that clearly match your Skip list. It's the part of the digest that encodes your taste, so it's a separate, swappable component (`src/classifier/`) rather than part of the agent's prompt. It's optional: without a ranking backend the digest works as before.
+
+- **Backends:** `sampling` (default; the MCP client's own model rates titles, skip only) or `jev` ([Jev](docs/jev/README.md), a decision model on OpenRouter that ranks and skips in about 2 seconds per 100 headlines, for about $0.03 per 1,000). Set `MEDIUM_READER_CLASSIFIER=jev` and `OPENROUTER_API_KEY`.
+- **In the digest:** each section of the work list is sorted best first with a 0–100 rank column, so the agent starts from the top and the lowest-ranked rows are the first cut when the list is long. `MEDIUM_READER_DIGEST_RANK_FLOOR` can collapse low-ranked posts into one line.
+- **Tuning it to you:** `tools/classifier/` collects headlines from your digest runs, lets you label them with one keypress each (`label.mjs`), scores them with the server's own classifier code, and analyzes the result (`analyze.mjs`). That gives recommended thresholds and the headlines where your labels and `interests.md` disagree most, which is what to edit.
+- **A first draft from your activity:** ask your agent to "propose an interests.md from my Medium activity". The `interests_evidence` tool gathers your reading lists, follows, history, digest picks and labels, and `save_interests_proposal` saves the draft beside your current file. You then test it against your labels before adopting it.
+
+How it works, the setup, the tuning loop step by step, benchmark results against a local model, and how to add a backend: **[docs/classifier.md](docs/classifier.md)**.
 
 ## Logging in
 
@@ -371,9 +387,13 @@ src/
   auth/login.ts          browser and paste login
   medium/http.ts         GraphQL client: cookies, Cloudflare detection, retries
   medium/api.ts          queries, feed, posts, follows, lists, claps
+  classifier/            headline classifier (docs/classifier.md): types.ts (the interface),
+                         jev.ts (Jev via OpenRouter), sampling.ts (MCP sampling), index.ts (backend from env)
   digest/                digest tools: state.ts (atomic state), collect.ts (digest_begin),
-                         rater.ts (title rating via MCP sampling), render.ts (the message),
-                         finish.ts (digest_finish, status, mark_reported), tools.ts (registration)
+                         render.ts (the message), finish.ts (digest_finish, status, mark_reported),
+                         tools.ts (registration)
+tools/classifier/        label, score and analyze your own headlines (docs/classifier.md)
+experiments/jev/         the trials behind the classifier's design (scripts and write-up; data not included)
 test/                    one file per module, plus an in-memory MCP client test
 ```
 
