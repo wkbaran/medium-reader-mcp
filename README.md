@@ -12,7 +12,7 @@ An MCP server that gives Claude (and any other MCP client) access to your Medium
 ![Tools](https://img.shields.io/badge/tools-18%20%2B%204%20digest-informational)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
-[Quick start](#quick-start) · [Other clients](#other-mcp-clients) · [Hermes digest](#daily-digest-with-hermes-agent) · [Tools](#tools) · [Logging in](#logging-in) · [Privacy and security](#privacy-and-security) · [How Medium's feeds behave](#how-mediums-feeds-behave) · [Troubleshooting](#troubleshooting)
+[Quick start](#quick-start) · [Other clients](#other-mcp-clients) · [Tools](#tools) · [Hermes Agent](#hermes-agent) · [Logging in](#logging-in) · [Privacy and security](#privacy-and-security) · [How Medium's feeds behave](#how-mediums-feeds-behave) · [Troubleshooting](#troubleshooting)
 
 </div>
 
@@ -126,9 +126,74 @@ claude mcp add --scope user medium-reader -- node /absolute/path/to/medium-reade
 ```
 </details>
 
-## Daily digest with Hermes Agent
+## Tools
 
-[`hermes/`](hermes/) contains a skill for [Hermes Agent](https://github.com/NousResearch/hermes-agent) that turns this server into a scheduled Medium digest. Each morning it collects new posts from your Following feed and from "For you", drops clickbait, has subagents read the most promising 20–25 in full, and sends one message with three sections: Following, Medium's top picks (positions 0–25 of "For you") and personal recommendations (positions 25–100). The top posts are flagged ⭐ "Read in full", with a two-line summary and why they're worth reading. The design follows the findings in [How Medium's feeds behave](#how-mediums-feeds-behave).
+Authors can be given as `@username` or a profile URL; publications by name, slug (`javarevisited`), or URL, including custom domains (`https://pub.towardsai.net`). Posts can be any Medium link, including custom domains, or the post's hex id.
+
+### Reading
+
+| Tool | What it returns |
+|---|---|
+| `auth_status` | Whether you're logged in, as whom, and whether the account is a Medium member |
+| `get_feed` | Your **Following** feed (default) or **For you**, newest first. `since` takes `"7d"`, `"48h"` or a date |
+| `read_post` | A full post as Markdown (or `text`). Long posts are paged with `start`. A member-only story you can't access is flagged as a preview |
+| `get_recent_posts` | Latest posts from one author or publication, with a cursor for paging back |
+| `search_posts` | Keyword search across Medium |
+| `list_following` | Authors or publications you follow. `total` is Medium's own count, which can be higher than the list it returns |
+| `list_reading_lists` | Your reading list and named lists, with item counts |
+| `get_list` | The posts in one of those lists |
+| `get_reading_history` | Posts you've read, most recently read first. Medium gives no read date per post. Useful for asking which follows you actually read |
+| `rate_headings` | Rates headlines against conditions you define (up to 5, each with a definition), with a confidence and a short reason per condition. Uses your MCP client's own model through sampling, so it only works in clients that support sampling |
+
+### Digest (only when `MEDIUM_READER_DIGEST_DIR` is set)
+
+Built for scheduled digests run by an agent harness such as [Hermes Agent](#hermes-agent) ([why](#why-this-server-has-tools-just-for-agent-harnesses)). They return plain text.
+
+| Tool | What it does |
+|---|---|
+| `digest_begin` | Collects what's new since the last digest, drops posts already reported and titles rated as skips, and returns a plain-text work list with refs (`F3`, `T1`, `Y12`). Writes only a run file |
+| `digest_finish` | Takes the picks by ref, renders the final message, and saves state. Repeating it for the same run changes nothing; `dry_run` saves nothing |
+| `digest_status` | Read-only: `last_run`, how many ids are saved, and the recent runs |
+| `mark_reported` | Repair: adds post ids, URLs or refs to the saved state, and optionally moves `last_run` forward |
+
+`read_post` also accepts a ref from the latest digest run, and its header always includes the post's `ID` and `Access` (`full` or `preview-only`).
+
+### Account changes
+
+| Tool | What it does |
+|---|---|
+| `follow` / `unfollow` | Follow or unfollow an author or publication. An ambiguous name lists the matches instead of guessing |
+| `mute` / `unmute` | Hide an author's or publication's posts from your feeds, including an author's posts in publications you follow. Private |
+| `save_to_list` / `remove_from_list` | Add a post to, or remove it from, your reading list or a named list |
+| `clap` / `undo_clap` | Clap for a post (never past Medium's 50-per-post limit), or take your claps back |
+
+The reading tools are marked read-only. The digest tools other than `digest_status` are marked as writing, but they only write files in the digest directory. The rest are marked as changing your account, so MCP clients ask before running them. `unfollow`, `remove_from_list` and `undo_clap` are also marked destructive. After each change the server checks with Medium and reports what actually happened; doing something that's already done (following someone you follow, saving a saved post) changes nothing.
+
+Follows and claps are visible to the author, and named lists are public. Mutes are private.
+
+## Hermes Agent
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) is Nous Research's open-source, self-hosted agent harness: it runs skills on a schedule, hands work to subagents and delivers the results to chat platforms such as Discord. This section is written for Hermes, but it applies to any agent harness that works the same way. Nothing in the digest tools depends on Hermes; only [`hermes/SKILL.md`](hermes/SKILL.md) does.
+
+### Why this server has tools just for agent harnesses
+
+Everything above is a general MCP server that works in any client. A scheduled, unattended digest is a different job from a person asking questions in a chat: there's nobody to notice a mistake, every turn costs money, and the run ends the moment the model sends its last message. So the server has four extra [digest tools](#digest-only-when-medium_reader_digest_dir-is-set), switched on by `MEDIUM_READER_DIGEST_DIR`, that take on everything that doesn't need judgment. Clients that don't set it see the general tools unchanged.
+
+What that buys:
+
+- **The model only judges.** Fetching three feeds, paging, deduplication, time zones, laying out the message and saving state are code. They come out the same on every run and cost no tokens.
+- **State can't be lost.** `digest_finish` saves state before it returns the message, so a run that ends as soon as the agent replies has already saved. The agent needs no file tools at all. Before these tools, a run that sent its digest and then stopped never saved state, and another spent half its budget on refused file writes.
+- **Summaries can't land on the wrong post.** `digest_begin` gives each post a ref (`F3`, `T1`, `Y12`), and `read_post` and `digest_finish` take those refs. A subagent reads by ref, so each ref fetches the post it names.
+- **Clickbait never reaches the expensive model.** `digest_begin` rates titles through MCP sampling, which runs on whatever cheap model the harness provides, and drops the confident skips before the agent sees the list.
+- **Output fits the harness.** The tools return compact plain text under 40,000 characters, because Hermes wraps MCP results in JSON and stops passing results over about 50,000 characters to the model.
+- **It's much cheaper.** Fewer turns and a smaller context took the daily run on Claude Sonnet from about $2.50 to about $0.40.
+- **It's safe for your account.** `digest_begin` never reads "For you" past position 250, which keeps Medium from rebuilding your homepage list. That's a rule an agent could forget; code doesn't.
+
+A general MCP server makes an account readable by any agent. A few tools shaped for how a harness actually runs make both the server and the harness much more effective than either is alone.
+
+### The daily digest
+
+[`hermes/`](hermes/) contains a skill that turns this server into a scheduled Medium digest. Each morning it collects new posts from your Following feed and from "For you", drops clickbait, has subagents read the most promising 20–25 in full, and sends one message with three sections: Following, Medium's top picks (positions 0–25 of "For you") and personal recommendations (positions 25–100). The top posts are flagged ⭐ "Read in full", with a two-line summary and why they're worth reading. The design follows the findings in [How Medium's feeds behave](#how-mediums-feeds-behave).
 
 The server does the mechanical work through four digest tools, so the agent's model only judges what to read and what's worth it:
 
@@ -136,7 +201,7 @@ The server does the mechanical work through four digest tools, so the agent's mo
 2. The agent shortlists refs, and subagents read them with `read_post`, which accepts the refs.
 3. `digest_finish` takes the agent's picks by ref, checks them, lays out the final Discord message, and saves state (every Following post plus every post it named). The agent replies with that message as is.
 
-### Setup
+#### Setup
 
 1. **Build the server** on your machine (`npm ci && npm run build`). Copy `dist/`, `package.json` and `package-lock.json` to a directory the Hermes container can see (for example `$HERMES_HOME/mcp/medium-reader-mcp`, which is `/opt/data/mcp/medium-reader-mcp` inside the official image), and install the runtime dependencies there:
    ```bash
@@ -169,14 +234,14 @@ The server does the mechanical work through four digest tools, so the agent's mo
    ```
    Run `hermes cron` commands as the user the gateway runs as (`docker exec -u hermes …` in the official image), so the files it writes keep the right owner.
 
-### Customizing
+#### Customizing
 
 - **What gets picked:** `interests.md` in the digest directory has two sections. **Interests** is shown to the agent when it shortlists. **Skip** lists title patterns to drop entirely, for example "I tried N+ courses" or "passive income"; a model rates each title against it by intent, not exact words, and titles it rates at 70% or more (`MEDIUM_READER_DIGEST_SKIP_THRESHOLD`) never reach the agent. The digest ends with a count of skipped posts and names the authors or publications behind most of them, so you can mute them. There's no built-in skip list.
 - **Sizes:** the shortlist sizes (up to 10 from Following, 5 top picks, 10 from "For you", chunks of 5 per subagent) are plain instructions in the skill's Procedure. How much is fetched is set by `digest_begin`'s arguments; the defaults match the numbers above.
 - **Output format:** `MEDIUM_READER_DIGEST_STYLE=markdown` drops the Discord-specific `<…>` around masked links. The layout itself is in `src/digest/render.ts`.
 - **Schedule and delivery:** use `hermes cron edit <job-id> --schedule "…"` or `--deliver …`.
 
-### Things to know
+#### Things to know
 
 - **State:** `state.json` in the digest directory holds `last_run` and the ids of every post reported, oldest first, trimmed to the newest 3,000 (`MEDIUM_READER_DIGEST_KEEP`). Only `digest_finish` and `mark_reported` write it: under a lock file, via a temporary file and a rename, with the previous version kept as `state.json.bak`. If a run dies before `digest_finish`, nothing is saved and the next run covers the same period. `last_run` is the server's clock when `digest_begin` started, and it never moves backwards.
 - **Repairs:** `digest_status` shows the state and the last runs, and whether each was committed. `mark_reported` adds ids (or URLs, or refs from the latest run) and can move `last_run` forward.
@@ -187,49 +252,6 @@ The server does the mechanical work through four digest tools, so the agent's mo
 - **A post that couldn't be read** is listed under ⚠ and saved as reported; it isn't retried.
 - **Read-only:** the skill never uses the tools that change your account.
 - **Your own account:** this server uses Medium's undocumented web API with your session cookies. A daily digest is light, read-only use, but if Medium objects to automated access, it's your account at risk.
-
-## Tools
-
-Authors can be given as `@username` or a profile URL; publications by name, slug (`javarevisited`), or URL, including custom domains (`https://pub.towardsai.net`). Posts can be any Medium link, including custom domains, or the post's hex id.
-
-### Reading
-
-| Tool | What it returns |
-|---|---|
-| `auth_status` | Whether you're logged in, as whom, and whether the account is a Medium member |
-| `get_feed` | Your **Following** feed (default) or **For you**, newest first. `since` takes `"7d"`, `"48h"` or a date |
-| `read_post` | A full post as Markdown (or `text`). Long posts are paged with `start`. A member-only story you can't access is flagged as a preview |
-| `get_recent_posts` | Latest posts from one author or publication, with a cursor for paging back |
-| `search_posts` | Keyword search across Medium |
-| `list_following` | Authors or publications you follow. `total` is Medium's own count, which can be higher than the list it returns |
-| `list_reading_lists` | Your reading list and named lists, with item counts |
-| `get_list` | The posts in one of those lists |
-| `get_reading_history` | Posts you've read, most recently read first. Medium gives no read date per post. Useful for asking which follows you actually read |
-| `rate_headings` | Rates headlines against conditions you define (up to 5, each with a definition), with a confidence and a short reason per condition. Uses your MCP client's own model through sampling, so it only works in clients that support sampling |
-
-### Digest (only when `MEDIUM_READER_DIGEST_DIR` is set)
-
-| Tool | What it does |
-|---|---|
-| `digest_begin` | Collects what's new since the last digest, drops posts already reported and titles rated as skips, and returns a plain-text work list with refs (`F3`, `T1`, `Y12`). Writes only a run file |
-| `digest_finish` | Takes the picks by ref, renders the final message, and saves state. Repeating it for the same run changes nothing; `dry_run` saves nothing |
-| `digest_status` | Read-only: `last_run`, how many ids are saved, and the recent runs |
-| `mark_reported` | Repair: adds post ids, URLs or refs to the saved state, and optionally moves `last_run` forward |
-
-`read_post` also accepts a ref from the latest digest run, and its header always includes the post's `ID` and `Access` (`full` or `preview-only`).
-
-### Account changes
-
-| Tool | What it does |
-|---|---|
-| `follow` / `unfollow` | Follow or unfollow an author or publication. An ambiguous name lists the matches instead of guessing |
-| `mute` / `unmute` | Hide an author's or publication's posts from your feeds, including an author's posts in publications you follow. Private |
-| `save_to_list` / `remove_from_list` | Add a post to, or remove it from, your reading list or a named list |
-| `clap` / `undo_clap` | Clap for a post (never past Medium's 50-per-post limit), or take your claps back |
-
-The reading tools are marked read-only. The digest tools other than `digest_status` are marked as writing, but they only write files in the digest directory. The rest are marked as changing your account, so MCP clients ask before running them. `unfollow`, `remove_from_list` and `undo_clap` are also marked destructive. After each change the server checks with Medium and reports what actually happened; doing something that's already done (following someone you follow, saving a saved post) changes nothing.
-
-Follows and claps are visible to the author, and named lists are public. Mutes are private.
 
 ## Logging in
 
