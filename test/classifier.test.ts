@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifierFromEnv, JevClassifier, SamplingClassifier } from "../src/classifier/index.js";
+import { classifierFromEnv, JevClassifier, jevOptionsFromEnv, SamplingClassifier } from "../src/classifier/index.js";
 import { RANK_LEVELS } from "../src/classifier/jev.js";
 import { DRAFTING_RULES, isTrainLabel, labelSections, renderEvidence, type Evidence } from "../src/classifier/evidence.js";
 import { proposalSummary, tidyProposal } from "../src/classifier/proposal.js";
@@ -86,7 +86,7 @@ describe("JevClassifier", () => {
   it("gives up at once on a bad key, and reports it as unavailable", async () => {
     const calls: Body[] = [];
     const r = await new JevClassifier({ apiKey: "bad", concurrency: 1, fetch: fakeJev({ status: () => 401, calls }) }).classify(items, PROFILE);
-    expect(r.unavailable).toMatch(/OpenRouter refused the request \(HTTP 401: bad key\)/);
+    expect(r.unavailable).toMatch(/openrouter\.ai refused the request \(HTTP 401: bad key\)/);
     expect(calls).toHaveLength(1);
   });
 
@@ -109,6 +109,29 @@ describe("JevClassifier", () => {
   });
 });
 
+describe("Jev endpoint settings", () => {
+  it("defaults to OpenRouter, and takes any decisions-API endpoint, key and model from env", () => {
+    expect(jevOptionsFromEnv("X", { OPENROUTER_API_KEY: "or" })).toEqual({ opts: { endpoint: "https://openrouter.ai/api/alpha/decisions", model: "typesafe/jev-1.13", apiKey: "or" } });
+    expect(jevOptionsFromEnv("X", { X_JEV_API_KEY: "own", OPENROUTER_API_KEY: "or" })).toMatchObject({ opts: { apiKey: "own" } });
+    expect(jevOptionsFromEnv("X", { X_JEV_URL: "http://localhost:8080/v1/systemone", X_JEV_MODEL: "jev-1.13" })).toEqual({ opts: { endpoint: "http://localhost:8080/v1/systemone", model: "jev-1.13" } });
+    expect(jevOptionsFromEnv("X", {})).toEqual({ error: "X_CLASSIFIER=jev but neither X_JEV_API_KEY nor OPENROUTER_API_KEY is set" });
+  });
+
+  it("sends to the configured endpoint, without an Authorization header when there's no key", async () => {
+    const seen: Array<{ url: string; auth: string | null }> = [];
+    const fetchImpl = (async (url: string, init: { headers: Record<string, string>; body: string }) => {
+      seen.push({ url, auth: init.headers.Authorization ?? null });
+      return fakeJev()(url, init);
+    }) as unknown as typeof fetch;
+    const c = new JevClassifier({ endpoint: "http://jev.local:8080/v1/systemone", model: "jev-1.13", fetch: fetchImpl });
+    expect(c.name).toBe("jev (jev-1.13 at jev.local:8080)");
+    const r = await c.classify(items.slice(0, 1), PROFILE);
+    expect(r.verdicts[0]).toMatchObject({ rank: expect.any(Number) });
+    expect(seen).toEqual([{ url: "http://jev.local:8080/v1/systemone", auth: null }]);
+    expect(new JevClassifier({ apiKey: "k" }).name).toBe("jev (typesafe/jev-1.13)");
+  });
+});
+
 describe("classifierFromEnv", () => {
   it("defaults to sampling, picks jev with a key, and falls back without one", () => {
     expect(classifierFromEnv("X", null, {}).classifier).toBeInstanceOf(SamplingClassifier);
@@ -117,7 +140,7 @@ describe("classifierFromEnv", () => {
     expect(jev.classifier.ranks).toBe(true);
     const missing = classifierFromEnv("X", null, { X_CLASSIFIER: "JEV" });
     expect(missing.classifier).toBeInstanceOf(SamplingClassifier);
-    expect(missing.warning).toMatch(/OPENROUTER_API_KEY isn't set/);
+    expect(missing.warning).toMatch(/neither X_JEV_API_KEY nor OPENROUTER_API_KEY is set/);
     expect(classifierFromEnv("X", null, { X_CLASSIFIER: "off" }).classifier.name).toBe("off");
     expect(classifierFromEnv("X", null, { X_CLASSIFIER: "magic" }).warning).toMatch(/isn't one of/);
   });

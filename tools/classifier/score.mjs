@@ -3,10 +3,12 @@
 // interests.md, so re-running only scores what's new, and editing interests.md starts a
 // fresh cache automatically.
 //
-//   node --env-file=.env tools/classifier/score.mjs [--classifier jev] [--all] [--data <dir>] [--interests <file>]
+//   node --env-file=.env tools/classifier/score.mjs [--classifier jev] [--url <endpoint>] [--model <id>] [--all] [--data <dir>] [--interests <file>]
 //   node tools/classifier/score.mjs --classifier sampling --base http://localhost:11434/v1 --model <model>
 //
-// jev needs OPENROUTER_API_KEY (about $0.03 per 1,000 headlines). sampling sends the same
+// jev uses the server's settings: <PREFIX>_JEV_URL (default OpenRouter), <PREFIX>_JEV_API_KEY
+// (default OPENROUTER_API_KEY), <PREFIX>_JEV_MODEL; --url and --model override them.
+// On OpenRouter that's about $0.03 per 1,000 headlines. sampling sends the same
 // prompt the server sends through MCP sampling, to any OpenAI-compatible chat endpoint
 // (Ollama, llama.cpp, vLLM, OpenRouter…), with thinking off. By default only labelled
 // headlines are scored; --all scores the whole dataset (useful before label.mjs, so the
@@ -25,10 +27,11 @@ const labels = loadLabels(dir);
 
 let classifier, model;
 if (kind === "jev") {
-  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
-  if (!apiKey) throw new Error("OPENROUTER_API_KEY isn't set (try node --env-file=.env …).");
-  model = arg("model", process.env[`${SOURCE.prefix}_JEV_MODEL`] || "typesafe/jev-1.13");
-  classifier = new m.JevClassifier({ apiKey, model });
+  // Same settings as the server: <PREFIX>_JEV_URL / _JEV_API_KEY / _JEV_MODEL, with --url / --model overrides.
+  const jev = m.jevOptionsFromEnv(SOURCE.prefix, { ...process.env, ...(arg("url") ? { [`${SOURCE.prefix}_JEV_URL`]: arg("url") } : {}), ...(arg("model") ? { [`${SOURCE.prefix}_JEV_MODEL`]: arg("model") } : {}) });
+  if (jev.error) throw new Error(`${jev.error} (try node --env-file=.env …).`);
+  model = jev.opts.model;
+  classifier = new m.JevClassifier(jev.opts);
 } else if (kind === "sampling") {
   model = arg("model");
   const base = arg("base", "http://localhost:11434/v1").replace(/\/$/, "");

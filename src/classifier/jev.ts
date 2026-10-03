@@ -1,8 +1,11 @@
 /**
- * The Jev backend: TypeSafe's Jev decision model through OpenRouter's Decisions API
- * (docs/jev/). Jev returns typed answers with probabilities instead of text, so each
- * headline gets a calibrated rank and skip probability in ~0.1–0.3 s, for about
- * $0.03 per 1,000 headlines (input tokens only).
+ * The Jev backend: a Jev-style decision model behind any endpoint that speaks the
+ * decisions API (docs/jev/): POST {model, state, questions} → {answers, usage}.
+ * That's OpenRouter's Decisions API (the default), OpenRouter's or TypeSafe's System
+ * One API (/v1/systemone), or any compatible or self-hosted server. Jev returns typed
+ * answers with probabilities instead of text, so each headline gets a calibrated rank
+ * and skip probability in ~0.1–0.3 s; on OpenRouter that's about $0.03 per 1,000
+ * headlines (input tokens only).
  *
  * One request per headline: Jev judges one `state` against several questions, so
  * headlines can't be batched into one prompt. Requests run a few at a time.
@@ -24,7 +27,8 @@ export const RANK_LEVELS = [
 ] as const;
 
 export interface JevOptions {
-  apiKey: string;
+  /** Bearer token; omitted from the request when empty (e.g. a local server with no auth). */
+  apiKey?: string;
   model?: string;
   endpoint?: string;
   /** Requests in flight at once. */
@@ -54,8 +58,8 @@ export class JevClassifier implements Classifier {
 
   constructor(private readonly opts: JevOptions) {
     this.model = opts.model ?? JEV_DEFAULT_MODEL;
-    this.name = `jev (${this.model})`;
     this.endpoint = opts.endpoint ?? JEV_ENDPOINT;
+    this.name = this.endpoint === JEV_ENDPOINT ? `jev (${this.model})` : `jev (${this.model} at ${hostOf(this.endpoint)})`;
     this.concurrency = opts.concurrency ?? 8;
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 20_000;
     this.minRequestMs = opts.minRequestMs ?? 2_000;
@@ -141,7 +145,7 @@ export class JevClassifier implements Classifier {
       if (left < this.minRequestMs) throw new Error("time ran out");
       const res = await this.fetchImpl(this.endpoint, {
         method: "POST",
-        headers: { Authorization: `Bearer ${this.opts.apiKey}`, "Content-Type": "application/json" },
+        headers: { ...(this.opts.apiKey ? { Authorization: `Bearer ${this.opts.apiKey}` } : {}), "Content-Type": "application/json" },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(Math.min(this.requestTimeoutMs, left)),
       });
@@ -149,7 +153,7 @@ export class JevClassifier implements Classifier {
       const text = await res.text().catch(() => "");
       // 401/403: bad key. 402 without an in-flight budget: out of credits. Neither gets better by retrying.
       if (res.status === 401 || res.status === 403 || (res.status === 402 && !text.includes("in_flight_budget"))) {
-        throw new FatalError(`OpenRouter refused the request (HTTP ${res.status}${text ? `: ${short(text)}` : ""})`);
+        throw new FatalError(`${hostOf(this.endpoint)} refused the request (HTTP ${res.status}${text ? `: ${short(text)}` : ""})`);
       }
       const retryable = res.status === 429 || res.status === 402 || res.status >= 500;
       if (!retryable || attempt >= 3) throw new Error(`HTTP ${res.status}${text ? `: ${short(text)}` : ""}`);
@@ -169,6 +173,14 @@ function toVerdict(a: Answers | undefined): Verdict | null {
 }
 
 const clamp = (n: number) => Math.min(1, Math.max(0, n));
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
 
 function short(msg: string): string {
   const one = msg.replace(/\s+/g, " ").trim();

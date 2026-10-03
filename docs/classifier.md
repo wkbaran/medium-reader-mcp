@@ -23,14 +23,28 @@ Ranking matters more than skipping. A post ranked low is effectively filtered: t
 
 | | `jev` | `sampling` (default) |
 | --- | --- | --- |
-| What | [Jev](jev/README.md), TypeSafe's decision model, through OpenRouter's Decisions API | The MCP client's own model, through MCP sampling (Hermes: `auxiliary.mcp` or `mcp_servers.<name>.sampling.model`) |
+| What | A [Jev](jev/README.md)-style decision model at any decisions-API endpoint (default: TypeSafe's Jev on OpenRouter), called directly over HTTPS | The MCP client's own model, through MCP sampling (Hermes: `auxiliary.mcp` or `mcp_servers.<name>.sampling.model`) |
 | Ranks | yes (calibrated scale) | no: skip only |
 | Speed | ~2 s per 100 headlines (8 parallel requests) | ~110 s per 100 with a local 27B model, batches of 40 |
-| Cost | ~$0.003 per 100 headlines (input tokens only) | free, but occupies the client's model |
-| Needs | `OPENROUTER_API_KEY` | a client that supports sampling |
+| Cost | on OpenRouter, ~$0.003 per 100 headlines (input tokens only) | free, but occupies the client's model |
+| Needs | an endpoint and usually a key (`MEDIUM_READER_JEV_URL`, `MEDIUM_READER_JEV_API_KEY`) | a client that supports sampling |
 | If it fails | nothing is skipped or ranked; `digest_begin` says why | same |
 
-Choose with `MEDIUM_READER_CLASSIFIER=jev | sampling | off`. `jev` without a key falls back to `sampling` and says so in the work list's warnings. Pin the Jev version with `MEDIUM_READER_JEV_MODEL` (default `typesafe/jev-1.13`): thresholds are tuned against a specific version.
+Choose with `MEDIUM_READER_CLASSIFIER=jev | sampling | off`.
+
+**`jev` works with any provider that speaks the decisions API.** The request is POST `{model, state, questions}` and the response is `{answers, usage}`. You configure it the way you'd point an OpenAI-compatible client at a local model:
+
+| Setting | Default | Examples |
+| --- | --- | --- |
+| `MEDIUM_READER_JEV_URL` | `https://openrouter.ai/api/alpha/decisions` | OpenRouter's Decisions API (default); `https://openrouter.ai/api/v1/systemone` (OpenRouter's System One API); TypeSafe's own System One endpoint; a compatible self-hosted server such as `http://localhost:8080/v1/systemone` |
+| `MEDIUM_READER_JEV_API_KEY` | `OPENROUTER_API_KEY` | The bearer token for that endpoint. Leave it empty for a server without auth |
+| `MEDIUM_READER_JEV_MODEL` | `typesafe/jev-1.13` | OpenRouter ids carry the `typesafe/` prefix; TypeSafe's own API takes `jev-1.13`. Pin a version: thresholds are tuned against one |
+
+On the default OpenRouter URL with no key, `jev` falls back to `sampling` and says so in the work list's warnings. The status line names a non-default endpoint, e.g. `Classifier jev (jev-1.13 at localhost:8080)`.
+
+**What "sampling" means.** MCP sampling is a protocol feature: the server sends a prompt back to the MCP client (`sampling/createMessage`), and the client runs it on its own LLM. The server needs no model or key of its own. In Hermes, that model is `auxiliary.mcp`, or `mcp_servers.<name>.sampling.model` for one server. The name is LLM jargon: generating text is "sampling" tokens from a model.
+
+**Who ranks with `sampling`.** The sampling backend only decides skips. The server doesn't sort the list, so prioritizing is left to the agent's model when it shortlists and picks ⭐ posts. That's how the digest ran before Jev, and why picks were already personal. With `jev`, the server ranks, and the agent starts from a sorted list.
 
 Jev gets one request per headline. It judges one input against several questions, so headlines can't be batched into one prompt. The request carries your Interests and Skip bullets plus the headline, and asks two questions:
 
@@ -47,7 +61,8 @@ mcp_servers:
     env:
       MEDIUM_READER_DIGEST_DIR: /opt/data/sandbox/medium_digest
       MEDIUM_READER_CLASSIFIER: jev
-      OPENROUTER_API_KEY: sk-or-…
+      MEDIUM_READER_JEV_API_KEY: ${JEV_OPENROUTER_API_KEY}   # set in Hermes's .env; a separate name keeps Hermes itself from using it
+      # MEDIUM_READER_JEV_URL: https://openrouter.ai/api/alpha/decisions   # the default; any decisions-API endpoint
       # MEDIUM_READER_DIGEST_SKIP_THRESHOLD: 0.7   # from analyze.mjs
       # MEDIUM_READER_DIGEST_RANK_FLOOR: 0.1       # only if analyze.mjs recommends one
 ```
@@ -61,8 +76,9 @@ All settings are environment variables on the MCP server (in Hermes: `mcp_server
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `MEDIUM_READER_CLASSIFIER` | `sampling` | `jev`, `sampling` or `off`. Default: the Qwen/sampling rater, skip only. |
-| `OPENROUTER_API_KEY` | none | Required for `jev`. Without it, `jev` falls back to `sampling` and says so in the work list's warnings. |
-| `MEDIUM_READER_JEV_MODEL` | `typesafe/jev-1.13` | The Jev version. Pin one: thresholds are tuned against a specific version. |
+| `MEDIUM_READER_JEV_URL` | OpenRouter's Decisions API | The decisions-API endpoint `jev` calls. Any compatible provider |
+| `MEDIUM_READER_JEV_API_KEY` | `OPENROUTER_API_KEY` | Bearer token for that endpoint; can be empty for a custom URL without auth. On the default URL with no key, `jev` falls back to `sampling` with a warning |
+| `MEDIUM_READER_JEV_MODEL` | `typesafe/jev-1.13` | The model id. Pin a version: thresholds are tuned against one |
 | `MEDIUM_READER_DIGEST_SKIP_THRESHOLD` | `0.7` | Posts with a skip probability at or above this are dropped. `1` effectively turns skipping off. |
 | `MEDIUM_READER_DIGEST_RANK_FLOOR` | `0` (off) | Posts ranked below this are listed apart (see above). Only with a ranking backend. |
 
