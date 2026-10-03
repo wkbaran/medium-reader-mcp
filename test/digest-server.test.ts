@@ -268,7 +268,7 @@ describe("digest tools", () => {
     const { client } = await connect({ FollowingFeed: followingList([recent(hex("f", 1))]), RecommendedFeed: forYouList([]), ReadingHistory: history([]) }, { sampling: true });
     const view = textOf(await client.callTool({ name: "digest_begin", arguments: {} }));
     expect(view).toContain("Classifier sampling: 0 skipped");
-    expect(view).toContain("MEDIUM_READER_CLASSIFIER=jev but OPENROUTER_API_KEY isn't set; used sampling.");
+    expect(view).toContain("MEDIUM_READER_CLASSIFIER=jev but neither MEDIUM_READER_JEV_API_KEY nor OPENROUTER_API_KEY is set; used sampling.");
   });
 
   it("says nothing is new on a quiet day and finishes with [SILENT]", async () => {

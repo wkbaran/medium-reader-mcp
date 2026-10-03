@@ -8,7 +8,7 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![MCP](https://img.shields.io/badge/MCP-stdio-6E56CF)
 ![Tools](https://img.shields.io/badge/tools-19%20%2B%205%20digest-informational)
-![Jev](https://img.shields.io/badge/ranking-Jev%20via%20OpenRouter-orange)
+![Jev](https://img.shields.io/badge/ranking-Jev%20decision%20model-orange)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
 [Quick start](#quick-start) · [Tools](#tools) · [Daily digest](#daily-digest-with-hermes-agent) · [Headline ranking with Jev](#headline-ranking-with-jev) · [Logging in](#logging-in) · [Troubleshooting](#troubleshooting)
@@ -29,7 +29,7 @@ An MCP server for your own Medium account:
 | Your [Medium](https://medium.com) account | Yes. A [membership](https://medium.com/membership) is needed to read member-only stories in full |
 | Node.js 20+ | Yes |
 | Chrome or Edge | Only for the browser login (you can paste cookies instead) |
-| [Jev](docs/jev/README.md) by TypeSafe, through [OpenRouter](https://openrouter.ai/typesafe/jev-1.13) | Optional. Ranks digest headlines against your interests in about 2 s per 100, for about $0.03 per 1,000. Needs an OpenRouter API key |
+| A [Jev](docs/jev/README.md)-style decision model | Optional. Ranks digest headlines against your interests in about 2 s per 100. Any provider with the same decisions API works, set by URL, key and model like an OpenAI-compatible client. The default is TypeSafe's Jev on [OpenRouter](https://openrouter.ai/typesafe/jev-1.13), about $0.03 per 1,000 headlines |
 | An MCP client | Claude Code, Claude Desktop, Cursor, VS Code, Hermes Agent… |
 
 How it talks to Medium:
@@ -136,8 +136,9 @@ Follows and claps are visible to the author, and named lists are public.
          MEDIUM_READER_HOME: /opt/data/mcp/medium-reader-home
          MEDIUM_READER_DIGEST_DIR: /opt/data/sandbox/medium_digest
          MEDIUM_READER_DIGEST_TZ: America/Denver
-         MEDIUM_READER_CLASSIFIER: jev                     # rank with Jev (default: sampling)
-         OPENROUTER_API_KEY: ${JEV_OPENROUTER_API_KEY}     # from Hermes's .env
+         MEDIUM_READER_CLASSIFIER: jev                          # rank with Jev (default: sampling)
+         MEDIUM_READER_JEV_API_KEY: ${JEV_OPENROUTER_API_KEY}   # from Hermes's .env
+         # MEDIUM_READER_JEV_URL: https://openrouter.ai/api/alpha/decisions   # the default; any decisions-API endpoint
    ```
 5. **Install the skill:** copy `hermes/SKILL.md` to `skills/productivity/medium-digest/` and `hermes/medium_digest_start.sh` to `scripts/`. Then edit the skill's Settings block.
 6. **Schedule it** (run as the `hermes` user). The job needs only the `delegation` and `medium-reader` toolsets:
@@ -152,7 +153,7 @@ More detail is in **[docs/digest.md](docs/digest.md)**: why the server has harne
 
 The digest's first step is deciding which of a day's 100–200 headlines matter to you, before anything is read. That's the classifier (`src/classifier/`), kept separate from summarizing and presenting.
 
-- **[Jev](docs/jev/README.md)** is a "decision model" from TypeSafe, served by OpenRouter. It returns typed answers with probabilities, not text. For every headline it gives:
+- **[Jev](docs/jev/README.md)** is a "decision model" from TypeSafe. It returns typed answers with probabilities, not text. For every headline it gives:
   - a **rank** (how much you'd want it, judged against `interests.md`)
   - a **skip** probability (whether it matches your Skip list)
 - **In the work list:** each section is sorted best first with a rank column. Confident skips are dropped. Low ranks sink, so the agent starts from the top, and on a big day the bottom is what gets cut.
@@ -160,9 +161,13 @@ The digest's first step is deciding which of a day's 100–200 headlines matter 
   - Against a local 27B model: Jev's top 10 were all posts the reader wanted, against 7 of 10, and it took 3 s instead of 178 s for 160 headlines.
   - [Details](docs/classifier.md#evidence).
 - **Backends** (`MEDIUM_READER_CLASSIFIER`):
-  - **`jev`**: ranks and skips. Needs `OPENROUTER_API_KEY`.
+  - **`jev`**: ranks and skips. The server calls the decisions API itself over HTTPS, not through sampling.
   - **`sampling`** (default): skips only. The server asks your MCP client's own model to rate each headline, which is what *MCP sampling* means: the server borrows the client's LLM rather than having its own (in Hermes, `auxiliary.mcp` or `mcp_servers.<name>.sampling.model`). It doesn't rank, so the order of posts is left to the agent's model when it shortlists.
   - **`off`**.
+- **Any Jev-style provider:** the `jev` backend speaks the decisions API (POST `model`, `state`, `questions` → `answers`), and you point it at a provider the way you'd point an OpenAI-compatible client at a local model:
+  - `MEDIUM_READER_JEV_URL`: the endpoint. Default: OpenRouter's `https://openrouter.ai/api/alpha/decisions`. TypeSafe's System One API (`…/v1/systemone`) and compatible or self-hosted servers work too.
+  - `MEDIUM_READER_JEV_API_KEY`: the bearer token (falls back to `OPENROUTER_API_KEY`). It can be empty for a server without auth.
+  - `MEDIUM_READER_JEV_MODEL`: the model id. Default `typesafe/jev-1.13`; TypeSafe's own API uses `jev-1.13`.
 - **Tune it to you:** label your own headlines with one keypress each, and the tools recommend thresholds and edits to `interests.md`. They can also draft an `interests.md` from your reading lists, follows and history.
 
 Everything about it is in **[docs/classifier.md](docs/classifier.md)**: settings, the tuning loop, drafting from activity, evidence, and adding a backend.
@@ -196,8 +201,9 @@ Everything about it is in **[docs/classifier.md](docs/classifier.md)**: settings
 | `MEDIUM_READER_DIGEST_KEEP` | Reported post ids to keep (default 3000) |
 | `MEDIUM_READER_DIGEST_STYLE` | `discord` (default) or `markdown` |
 | `MEDIUM_READER_CLASSIFIER` | `jev`, `sampling` (default) or `off` |
-| `OPENROUTER_API_KEY` | For `jev` |
-| `MEDIUM_READER_JEV_MODEL` | Jev version (default `typesafe/jev-1.13`) |
+| `MEDIUM_READER_JEV_URL` | Decisions-API endpoint for `jev` (default OpenRouter's) |
+| `MEDIUM_READER_JEV_API_KEY` | Bearer token for that endpoint (default `OPENROUTER_API_KEY`) |
+| `MEDIUM_READER_JEV_MODEL` | Model id (default `typesafe/jev-1.13`) |
 | `MEDIUM_READER_DIGEST_SKIP_THRESHOLD` | Skip probability at which a headline is dropped (default 0.7) |
 | `MEDIUM_READER_DIGEST_RANK_FLOOR` | Rank below which posts are collapsed to one line (default off) |
 
@@ -207,7 +213,7 @@ Everything about it is in **[docs/classifier.md](docs/classifier.md)**: settings
 
 - **Your session goes only to `medium.com`.** Custom-domain posts are fetched from medium.com by id.
 - **It's stored in `~/.config/medium-reader/auth.json`**, mode `600`. Nothing is stored in the repo.
-- **No telemetry.** Requests go only to Medium, and to OpenRouter if Jev is on (headlines and your interests only).
+- **No telemetry.** Requests go only to Medium, and to your Jev provider if it's on (headlines and your interests only).
 - **Reading through this server doesn't add posts** to your Medium reading history.
 - **`package-lock.json` pins every dependency;** install with `npm ci`.
 
@@ -228,7 +234,7 @@ The digest's design rests on a few findings, written up in **[docs/feeds.md](doc
 | *"Cloudflare protection blocked the request"* | Usually temporary. If it persists, Medium changed its bot rules; please open an issue |
 | The server doesn't appear in `/mcp` | Restart Claude Code |
 | `login` can't find a browser | Install Chrome, set `MEDIUM_BROWSER_PATH`, or use `--paste` |
-| The digest says `Classifier … unavailable` | Check `OPENROUTER_API_KEY` (for `jev`) or the client's sampling setup |
+| The digest says `Classifier … unavailable` | For `jev`, check `MEDIUM_READER_JEV_URL` and the key; for `sampling`, the client's sampling setup |
 
 ## Development
 
