@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { classifierFromEnv, JevClassifier, SamplingClassifier } from "../src/classifier/index.js";
 import { RANK_LEVELS } from "../src/classifier/jev.js";
+import { DRAFTING_RULES, isTrainLabel, labelSections, renderEvidence, type Evidence } from "../src/classifier/evidence.js";
+import { proposalSummary, tidyProposal } from "../src/classifier/proposal.js";
 import { parseProfile, splitSection } from "../src/classifier/types.js";
 
 const PROFILE = {
@@ -121,3 +123,58 @@ describe("classifierFromEnv", () => {
   });
 });
 
+describe("interests evidence and proposals", () => {
+  const ev = (n: number): Evidence => ({
+    source: "Test",
+    current: "## Interests\n- Databases\n\n## Skip\n- Hustle posts\n",
+    sections: [
+      { title: "History", strength: "weak", about: "clicked", items: Array.from({ length: n }, (_, i) => ({ title: `History post ${i}`, subtitle: "x".repeat(100), publication: i % 2 ? "Pub A" : "Pub B" })) },
+      { title: "Saved", strength: "strong", about: "saved", items: Array.from({ length: n }, (_, i) => ({ title: `Saved post ${i}`, author: "Ann" })), total: n * 3 },
+      { title: "Follows", strength: "strong", about: "follows", lines: ["A · B · C"], total: 3 },
+    ],
+    warnings: ["No negative evidence"],
+    saveHint: "call save_interests_proposal",
+  });
+
+  it("renders strongest first, with rules, the current file, tallies and counts", () => {
+    const t = renderEvidence(ev(5));
+    expect(t).toContain(DRAFTING_RULES);
+    expect(t).toContain("===== CURRENT interests.md =====\n## Interests\n- Databases");
+    expect(t.indexOf("## Saved")).toBeLessThan(t.indexOf("## History"));
+    expect(t).toContain("## Saved [STRONG: chosen deliberately] (5 of 15 shown)");
+    expect(t).toContain("## Follows [STRONG: chosen deliberately] (3)\nfollows\nA · B · C");
+    expect(t).toContain("Most frequent: Ann ×5");
+    expect(t).toContain("Then: call save_interests_proposal");
+    expect(t).toContain("Not available:\n- No negative evidence");
+  });
+
+  it("fits a budget by dropping weak subtitles first, then trimming the largest section for its strength", () => {
+    const t = renderEvidence(ev(200), 12_000);
+    expect(t.length).toBeLessThanOrEqual(12_000);
+    expect(t).not.toContain("— xxxx"); // weak subtitles went first
+    const shown = (name: string) => Number(t.match(new RegExp(`## ${name} \\[[^\\]]+\\] \\((\\d+) of`))?.[1]);
+    expect(shown("Saved")).toBeGreaterThan(shown("History"));
+  });
+
+  it("splits labels into a fixed drafting half and test half", () => {
+    const ids = Array.from({ length: 200 }, (_, i) => `id${i}`);
+    const train = ids.filter(isTrainLabel);
+    expect(train.length).toBeGreaterThan(70);
+    expect(train.length).toBeLessThan(130);
+    expect(isTrainLabel("id1")).toBe(isTrainLabel("id1"));
+    const sections = labelSections(new Map([["a", "must"], ["b", "skip"], ["c", "meh"], ["d", "read"]]), new Map(["a", "b", "c", "d"].map((id) => [id, { title: `T ${id}` }])));
+    expect(sections.map((s) => [s.title, s.strength, s.items!.map((i) => `${i.title}/${i.note}`)])).toEqual([
+      ["Labelled must or read", "strong", ["T a/must", "T d/read"]],
+      ["Labelled skip", "negative", ["T b/skip"]],
+    ]);
+  });
+
+  it("tidies a proposal and summarizes what changed", () => {
+    const t = tidyProposal("```markdown\n# Mine\n\n## Interests\n- Databases\n- Travel essays\n\n## Skip\n- Sports\n\n## Changes and why\n- added travel\n```");
+    expect(t).toEqual({ ok: true, text: "# Mine\n\n## Interests\n- Databases\n- Travel essays\n\n## Skip\n- Sports\n" });
+    expect(tidyProposal("Just some thoughts")).toMatchObject({ ok: false });
+    const s = proposalSummary("## Interests\n- Databases\n\n## Skip\n- Hustle posts\n", (t as { text: string }).text);
+    expect(s).toContain("Interests: 2 bullets (1 new, 0 removed, 1 kept)\n  + Travel essays");
+    expect(s).toContain("Skip: 1 bullet (1 new, 1 removed, 0 kept)\n  + Sports\n  - Hustle posts");
+  });
+});

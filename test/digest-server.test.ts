@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -308,3 +308,52 @@ describe("rate_headings", () => {
   });
 });
 
+describe("interests tools", () => {
+  it("gathers evidence from lists, follows, digest picks, labels and history, and saves a proposal beside interests.md", async () => {
+    await writeFile(join(dir, "interests.md"), INTERESTS);
+    await mkdir(join(dir, "runs"), { recursive: true });
+    await writeFile(
+      join(dir, "runs", "20261001T120000Z.json"),
+      JSON.stringify({ items: [{ ref: "F1", id: "aa", title: "Postgres at scale", publication: "Big Pub" }], judgments: { starred: [{ ref: "F1", gist: "", why: "" }] } }),
+    );
+    await mkdir(join(dir, "classifier"), { recursive: true });
+    await writeFile(join(dir, "classifier", "dataset.jsonl"), ['{"id":"x1","title":"Run club changed my life"}', '{"id":"x2","title":"Kafka lag, measured"}'].join("\n") + "\n");
+    await writeFile(join(dir, "classifier", "labels.jsonl"), ['{"id":"x1","label":"skip"}', '{"id":"x2","label":"must"}'].join("\n") + "\n");
+    const { client } = await connect({
+      ReadingList: { data: { getPredefinedCatalog: { id: "rl", itemsConnection: { paging: { count: 1 } } } } },
+      Lists: { data: { catalogsByUser: { catalogs: [], paging: { nextPageCursor: null } } } },
+      ReadingListItems: { data: { getPredefinedCatalog: { itemsConnection: { items: [{ entity: { __typename: "Post", ...rawPost(hex("a", 1), { title: "Saved: Java virtual threads" }) } }], paging: { count: 1 } } } } },
+      FollowCounts: { data: { userResult: { socialStats: { collectionFollowingCount: 2 } } } },
+      FollowingPublications: { data: { userResult: { followingCollectionConnection: { collections: [{ id: "c1", name: "Javarevisited", slug: "javarevisited" }, { id: "c2", name: "ITNEXT", slug: "itnext" }] } } } },
+      ReadingHistory: history([rawPost(hex("e", 1), { title: "Read: Kubernetes autoscaling" })]),
+    });
+
+    const ev = textOf(await client.callTool({ name: "interests_evidence", arguments: {} }));
+    expect(ev).toMatch(/^INTERESTS EVIDENCE · Medium/);
+    expect(ev).toContain("===== CURRENT interests.md =====\n# Interests file");
+    expect(ev).toMatch(/## Saved to reading lists \[STRONG[^\]]*\] \(1\)\n.*\n- Saved: Java virtual threads/);
+    expect(ev).toContain("## Followed publications [STRONG: chosen deliberately] (2)");
+    expect(ev).toContain("Javarevisited · ITNEXT");
+    expect(ev).toContain("- Postgres at scale (Big Pub)");
+    expect(ev).toContain("- Kafka lag, measured [must]");
+    expect(ev).toContain("- Run club changed my life [skip]");
+    expect(ev).toContain("- Read: Kubernetes autoscaling");
+    expect(ev).toContain("call save_interests_proposal");
+
+    const bad = await client.callTool({ name: "save_interests_proposal", arguments: { text: "I think you like Java." } });
+    expect(bad.isError).toBe(true);
+    const saved = textOf(await client.callTool({ name: "save_interests_proposal", arguments: { text: "## Interests\n- Databases\n- Java concurrency\n\n## Skip\n- Self-help challenges\n\nChanges and why\n- more Java" } }));
+    expect(saved).toContain("interests.md is unchanged.");
+    expect(saved).toContain("  + Java concurrency");
+    expect(await readFile(join(dir, "interests.proposed.md"), "utf8")).toBe("## Interests\n- Databases\n- Java concurrency\n\n## Skip\n- Self-help challenges\n");
+    expect(await readFile(join(dir, "interests.md"), "utf8")).toBe(INTERESTS);
+  });
+
+  it("offers evidence without a digest directory, but not saving", async () => {
+    delete process.env.MEDIUM_READER_DIGEST_DIR;
+    const { client } = await connect({});
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names).toContain("interests_evidence");
+    expect(names).not.toContain("save_interests_proposal");
+  });
+});
