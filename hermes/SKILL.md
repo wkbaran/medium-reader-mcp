@@ -1,7 +1,7 @@
 ---
 name: medium-digest
 description: Daily Medium digest in three sections (the Following feed, Medium's top picks, and personal "For you" recommendations), with picks read in full by subagents. Uses the medium-reader MCP server's digest tools.
-version: 2.0.0
+version: 2.1.0
 platforms: [linux]
 metadata:
   hermes:
@@ -49,20 +49,20 @@ The result is a work list. Each post has a ref (`F` = Following, `T` = Medium's 
 - If you see clear clickbait the rater missed, note its ref for `extra_skipped` and don't shortlist it.
 
 ### 3. Read the shortlist with subagents
-Split the shortlisted refs into chunks of **5**. Call `delegate_task` with `tasks=[…]` of **at most `MAX_PARALLEL` tasks per call**, and keep calling it until every chunk is done. Give each task this goal, with its refs listed:
+Split the shortlisted refs into chunks of **5**. Call `delegate_task` with `tasks=[…]` of **at most `MAX_PARALLEL` tasks per call**, and keep calling it until every chunk is done. Give each task this goal, with its refs listed exactly as `digest_begin` gave them (never renumbered):
 
 > For each ref below, call `read_post` with `url` set to the ref exactly as given (for example `"F3"`) and `format: "text"`. If the response says to call again with `start`, do so until you reach the end. Call one tool per `tool_call`. Don't skim, and don't summarize from the title. For each ref, return exactly this block and nothing else:
 >
 > ```
-> REF: <the ref>
-> ACCESS: <the value of the "- Access:" line: full or preview-only>
+> REF: [the ref]
+> ACCESS: [the value of the "- Access:" line: full or preview-only]
 > TYPE: essay | reporting | analysis | tutorial | listicle | opinion | announcement | other
-> GIST: <2–3 sentences: the actual argument or findings, not the topic>
-> DEPTH: <1–5, how much is lost by reading only the gist: 5 = dense original thinking or evidence that doesn't compress; 1 = the gist covers it>
-> WHY: <one sentence justifying DEPTH, naming what's distinctive>
+> GIST: [2–3 sentences: the actual argument or findings, not the topic]
+> DEPTH: [1–5, how much is lost by reading only the gist: 5 = dense original thinking or evidence that doesn't compress; 1 = the gist covers it]
+> WHY: [one sentence justifying DEPTH, naming what's distinctive]
 > ```
 >
-> If `read_post` fails for a ref, return `REF: <ref>`, `ACCESS: unreadable`, `GIST: (could not read: <error>)` and `DEPTH: 0`.
+> If `read_post` fails for a ref, return `REF: [ref]`, `ACCESS: unreadable`, `GIST: (could not read: [error])` and `DEPTH: 0`.
 
 If a chunk comes back missing refs or with errors, retry **that chunk once** in the next `delegate_task` call. After that, keep whatever came back. Don't read posts yourself in the main session.
 

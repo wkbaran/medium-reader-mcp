@@ -8,7 +8,21 @@ import type { Judgment, Judgments, Pool, RunFile, RunItem } from "./types.js";
 
 export const DIGEST_MARKER = "===== DIGEST: reply with exactly the text below, nothing before or after =====";
 const REF = /^[FTY]\d{1,3}$/i;
-const LIMITS = { starred: 8, starGist: 400, why: 250, gist: 200 };
+const LIMITS = { starred: 8, starGist: 400, why: 250, gist: 280 };
+
+/**
+ * Shorten text to at most n characters (including the "…") at a readable break: the
+ * last sentence or clause end if that keeps at least 60% of the room, else the last
+ * word break, so a gist never ends mid-word.
+ */
+export function shorten(t: string, n: number): string {
+  if (t.length <= n) return t;
+  const room = t.slice(0, n - 1);
+  const clause = Math.max(...[". ", "; ", ": ", ", ", " — ", " - "].map((sep) => room.lastIndexOf(sep)));
+  if (clause >= n * 0.6) return room.slice(0, clause).replace(/[\s,;:—-]+$/, "") + (room[clause] === "." ? "." : "…");
+  const space = room.lastIndexOf(" ");
+  return (space > 0 ? room.slice(0, space) : room).replace(/[\s,;:—-]+$/, "") + "…";
+}
 
 /** An error the model can act on; the message is shown as is. */
 export class DigestInputError extends Error {}
@@ -79,7 +93,7 @@ export function resolveJudgments(run: RunFile, input: FinishInput): { judgments:
     const t = (s ?? "").replace(/\s+/g, " ").trim();
     if (t.length <= n) return t;
     warnings.push(`${ref} ${what} cut to ${n} characters.`);
-    return t.slice(0, n - 1).trimEnd() + "…";
+    return shorten(t, n);
   };
 
   for (const s of input.starred) {

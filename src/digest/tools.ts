@@ -43,7 +43,7 @@ const refList = (what: string) =>
 
 const pick = z.object({
   ref: z.string().describe("Ref from digest_begin (F3, T1, Y12), post id or URL."),
-  gist: z.string().default("").describe("One line: the post's actual point (≤200 characters)."),
+  gist: z.string().default("").describe("One line: the post's actual point (≤280 characters)."),
 });
 
 const localOnly = { readOnlyHint: false, destructiveHint: false, openWorldHint: false } as const;

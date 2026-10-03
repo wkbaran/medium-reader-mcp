@@ -1,3 +1,4 @@
+import { shorten } from "../src/digest/finish.js";
 import { describe, expect, it } from "vitest";
 import { alsoNewLines, formatClaps, formatLocal, renderDigest, shortReason } from "../src/digest/render.js";
 import type { Judgments, RunFile, RunItem } from "../src/digest/types.js";
@@ -136,5 +137,27 @@ describe("renderDigest", () => {
     const { message } = renderDigest(runWith(items), { ...none, following: [{ ref: "F1", gist: "g" }] });
     expect(message).toContain("_Also new_\n**Pub** (1) · [Post F2](<https://medium.com/p/f2>)");
     expect(message).toMatch(/🗑 Skipped 2 as clickbait$/);
+  });
+});
+
+describe("shorten", () => {
+  it("leaves short text alone", () => {
+    expect(shorten("Short gist.", 50)).toBe("Short gist.");
+  });
+
+  it("cuts at a clause break, never mid-word", () => {
+    const t =
+      "Svalbard's 1920 treaty gives 46 nations' citizens visa-free unlimited residence/work rights, provided they're self-sufficient; outside Longyearbyen, carrying a firearm for polar bears is legally required.";
+    const out = shorten(t, 200);
+    expect(out.length).toBeLessThanOrEqual(200);
+    expect(out).toBe("Svalbard's 1920 treaty gives 46 nations' citizens visa-free unlimited residence/work rights, provided they're self-sufficient; outside Longyearbyen…");
+  });
+
+  it("keeps a whole sentence when one fits", () => {
+    expect(shorten("First sentence is here and fairly long. Second one runs on and on past the limit.", 60)).toBe("First sentence is here and fairly long.");
+  });
+
+  it("falls back to a word break when the only clause break is early", () => {
+    expect(shorten("Hi, this sentence keeps going without any further punctuation at all", 40)).toBe("Hi, this sentence keeps going without…");
   });
 });
