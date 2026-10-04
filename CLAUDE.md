@@ -93,7 +93,7 @@ Common mistakes and confusion points in this project. Add to this list when some
 
 ## Jev trials (`experiments/jev/`)
 
-- The research behind `src/classifier/` (the shipped version of this is `tools/classifier/`). Trials of Jev (`typesafe/jev-1.13` via OpenRouter, docs in `docs/jev/`). The key is `OPENROUTER_API_KEY` in `.env` (gitignored since 2026-10-02; it wasn't before). Run scripts with `node --env-file=../../.env`.
+- The research behind `src/classifier/` (the shipped version of this is `tools/classifier/`). Trials of Jev (`typesafe/jev-1.13` via OpenRouter; our notes and links to its docs are in `docs/jev/README.md`. Third-party docs are linked, never copied into the repo: local copies go in the gitignored `docs/jev/upstream/`). The key is `OPENROUTER_API_KEY` in `.env` (gitignored since 2026-10-02; it wasn't before). Run scripts with `node --env-file=../../.env`.
 - `snippets.mjs` imports `../../dist` (run `npm run build` first) and uses the local medium-reader login. Bodies contain `image:` caption lines and inline `[image: …]` captions; both are stripped.
 - Trials are per interests profile: `PROFILE=v2` selects `data/interests.v2.md` and caches answers in `data/answers.v2.jsonl` (default `v1`). Changing a profile changes the questions, so give the changed file a new version rather than editing one with cached answers.
 - `data/` is gitignored and was built from Hermes's `state.db` (past `medium-digest` runs). Jev answers are cached in `data/answers.jsonl`, so analysis is free; only `run.mjs` costs money (~$0.033 per 1,000 requests).
