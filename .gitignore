@@ -9,3 +9,6 @@ cookies.json
 browser-profile/
 .env
 classifier-data/
+
+# Local copies of third-party docs (not ours to publish)
+docs/jev/upstream/

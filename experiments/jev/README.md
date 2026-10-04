@@ -2,7 +2,7 @@
 
 > **Outcome:** this research became the headline classifier, `src/classifier/` (design, settings and results in [docs/classifier.md](../../docs/classifier.md)), and its tuning tools, `tools/classifier/`. This directory is the record of how it was designed. The scripts here are the research versions; use `tools/classifier/` for real tuning.
 
-Can Jev (`typesafe/jev-1.13` via OpenRouter, see `docs/jev/`) replace or add to the Qwen sampling rater in the Medium digest? This directory holds the trial data, the scripts, and the threshold-tuning plan.
+Can Jev (`typesafe/jev-1.13` via OpenRouter, see `docs/jev/README.md`) replace or add to the Qwen sampling rater in the Medium digest? This directory holds the trial data, the scripts, and the threshold-tuning plan.
 
 Everything in `data/` is gitignored, so the scripts can't run from a fresh clone. It held headlines from Hermes runs, cached Jev answers (`answers.<profile>.jsonl`) and the maintainer's labels.
 
