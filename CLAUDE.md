@@ -60,6 +60,7 @@ Common mistakes and confusion points in this project. Add to this list when some
 
 - **The version is in two places:** `package.json` and `VERSION` in `src/server.ts` (what MCP clients see in `serverInfo`). Bump both.
 
+- **`docs/digest-tools.md` is checked by `test/docs-example.test.ts`.** Changing a digest tool's output or input fields fails that test until the doc is updated. Regenerate the output blocks with `UPDATE_DOCS=1 npx vitest run test/docs-example.test.ts`, review the diff, and update the argument tables and prose by hand.
 - TypeScript is 7.x, the native compiler. Some older tsconfig options (`baseUrl`, `moduleResolution: node`) no longer exist.
 - If vitest fails with `Cannot find native binding` (rolldown), it's the npm optional-dependency bug: delete `node_modules` and `package-lock.json`, then run `npm install` again.
 - `playwright-core` is an **optional** dependency and is imported dynamically only by `login`. Don't import it at the top level of anything the server loads.

@@ -72,7 +72,7 @@ export function rawPost(id: string, extra: Record<string, unknown> = {}) {
  * (`to` = offset, a fixed `source`). Throws if asked for offset 250 or beyond,
  * which would rebuild the user's homepage list.
  */
-export function forYouList(posts: Array<Record<string, unknown>>, reason = (i: number) => (i % 2 ? "Based on your reading history" : "Because you follow Coding")) {
+export function forYouList(posts: Array<Record<string, unknown>>, reason: (i: number) => string = (i) => (i % 2 ? "Based on your reading history" : "Because you follow Coding")) {
   return (req: GqlRequest): Reply => {
     const paging = req.variables.paging as { to?: string; source?: string; limit?: number };
     const offset = Number(paging.to ?? 0);
