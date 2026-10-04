@@ -16,6 +16,8 @@ An unattended, scheduled digest is a different job from a person chatting: nobod
 
 ## How a run works
 
+[digest-tools.md](digest-tools.md) follows one run step by step, with a diagram, each tool's arguments and real example output.
+
 1. **`digest_begin`** collects everything new since the last run, from Following, Medium's top picks and "For you" positions 25–100. It then:
    - drops posts already reported
    - runs the classifier: skips are dropped and the rest are sorted by rank

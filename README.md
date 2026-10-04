@@ -112,6 +112,8 @@ Follows and claps are visible to the author, and named lists are public.
 | `digest_status` · `mark_reported` | Inspect the state · repair it |
 | `save_interests_proposal` | Saves a drafted `interests.md` as `interests.proposed.md`, never over the real one |
 
+A worked example of a whole run, with each tool's arguments and output: [docs/digest-tools.md](docs/digest-tools.md).
+
 ## Daily digest with Hermes Agent
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) runs skills on a schedule and delivers to Discord and other chats. [`hermes/SKILL.md`](hermes/SKILL.md) turns this server into a morning digest:
