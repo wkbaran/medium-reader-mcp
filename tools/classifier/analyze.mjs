@@ -112,7 +112,7 @@ for (const r of runs.filter((r) => !focus || r.hash === focus)) {
     console.log(
       floor
         ? `\nRecommended: ${SOURCE.prefix}_DIGEST_RANK_FLOOR=${floor} (the highest value that collapses no must and at most ${Math.round(maxReadLoss * 100)}% of read). Collapsed posts stay valid refs and still appear under "Also new".`
-        : `\nNo floor collapses anything without hiding a must: leave ${SOURCE.prefix}_DIGEST_RANK_FLOOR unset. Sorting alone still puts them last.`,
+        : `\nEvery floor collapses a must or more than ${Math.round(maxReadLoss * 100)}% of read: leave ${SOURCE.prefix}_DIGEST_RANK_FLOOR unset. Sorting alone still puts them last.`,
     );
   }
 

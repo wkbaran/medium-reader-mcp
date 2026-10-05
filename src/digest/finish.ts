@@ -207,7 +207,7 @@ function countsLine(run: RunFile, c: ReturnType<typeof renderDigest>["counts"]):
 
 export async function digestStatus(
   dir: string,
-  config: { tz: string; style: string; keep: number; threshold: number; classifier?: string; rankFloor?: number },
+  config: { tz: string; style: string; keep: number; threshold: number; classifier?: string; rankFloor?: number; rankFloorMode?: "compact" | "exclude" },
 ): Promise<string> {
   const loaded = await loadState(dir);
   const lines: string[] = [];
@@ -224,7 +224,7 @@ export async function digestStatus(
   lines.push(
     `Config: dir ${dir} · tz ${config.tz} · style ${config.style} · keep ${config.keep} · skip threshold ${Math.round(config.threshold * 100)}%` +
       (config.classifier ? ` · classifier ${config.classifier}` : "") +
-      (config.rankFloor ? ` · rank floor ${Math.round(config.rankFloor * 100)}%` : ""),
+      (config.rankFloor ? ` · rank floor ${Math.round(config.rankFloor * 100)}%${config.rankFloorMode === "exclude" ? " (exclude)" : ""}` : ""),
   );
   const ids = (await listRunIds(dir)).reverse().slice(0, 5);
   if (!ids.length) {

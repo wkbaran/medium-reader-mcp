@@ -6,7 +6,7 @@ import { classifierFromEnv } from "../classifier/index.js";
 import { proposalSummary, tidyProposal } from "../classifier/proposal.js";
 import { samplingFn } from "../classifier/mcp.js";
 import { SamplingRater } from "../classifier/sampling.js";
-import { digestKeep, digestRankFloor, digestSkipThreshold, digestStyle, digestTimezone } from "../config.js";
+import { digestKeep, digestRankFloor, digestRankFloorMode, digestSkipThreshold, digestStyle, digestTimezone } from "../config.js";
 import type { ClientProvider } from "../server.js";
 import { errorText, run, text } from "../tool-util.js";
 import { BEGIN_DEFAULTS, digestBegin } from "./collect.js";
@@ -113,6 +113,7 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
           dir,
           classifier,
           rankFloor: digestRankFloor(),
+          rankFloorMode: digestRankFloorMode(),
           tz: warning ? { ...tz, warning: [tz.warning, warning].filter(Boolean).join(" ") } : tz,
           style: digestStyle(),
           threshold: digestSkipThreshold(),
@@ -173,6 +174,7 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
             threshold: digestSkipThreshold(),
             classifier: classifierFromEnv("MEDIUM_READER", samplingFn(server)).classifier.name,
             rankFloor: digestRankFloor(),
+            rankFloorMode: digestRankFloorMode(),
           }),
         ),
       ),

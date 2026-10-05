@@ -260,6 +260,46 @@ describe("digest tools", () => {
     expect(status).toContain("classifier jev (typesafe/jev-1.13) · rank floor 20%");
   });
 
+  it("in exclude mode, leaves posts below the rank floor out of the work list and the digest, and still commits them", async () => {
+    process.env.MEDIUM_READER_CLASSIFIER = "jev";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.MEDIUM_READER_DIGEST_RANK_FLOOR = "0.5";
+    process.env.MEDIUM_READER_DIGEST_RANK_FLOOR_MODE = "exclude";
+    vi.stubGlobal("fetch", async (_url: string, init: { body: string }) => {
+      const t = JSON.parse(init.body).state.headline.title as string;
+      const score = t.includes("Postgres") ? 3 : t.includes("Kafka") ? 2 : t.includes("$") ? 0 : t.includes("Horoscope") ? 0.3 : 1.2;
+      return new Response(JSON.stringify({ answers: { importance: { type: "score", score }, skip_ctx: { type: "noul", noul: t.includes("$") ? 0.9 : 0.1 } } }));
+    });
+    await writeFile(join(dir, "interests.md"), INTERESTS);
+    await writeFile(join(dir, "state.json"), JSON.stringify({ last_run: "2026-09-29T12:00:00Z", reported_posts: [] }, null, 2) + "\n");
+    const following = [
+      recent(hex("f", 1), { title: "Your Horoscope for Tuesday" }),
+      recent(hex("f", 2), { title: "Kafka consumer lag, measured" }),
+      recent(hex("f", 3), { title: "I made $10k in a month" }),
+      recent(hex("f", 4), { title: "Postgres vacuum, explained" }),
+      recent(hex("f", 5), { title: "Something in between" }),
+    ];
+    const { client } = await connect({ FollowingFeed: followingList(following), RecommendedFeed: forYouList([]), ReadingHistory: history([]) });
+
+    const view = textOf(await client.callTool({ name: "digest_begin", arguments: {} }));
+    expect(view).toContain("Classifier jev (typesafe/jev-1.13): 5 ranked · 1 skipped (threshold 70%) · 2 below rank floor 50% (left out)");
+    expect(view).toMatch(/## Following\nF4 \| 100 \| Postgres .*\nF2 \| 67 \| Kafka .*\n/);
+    expect(view).not.toContain("Ranked below");
+    expect(view).not.toContain("Horoscope");
+    expect(view).not.toContain("Something in between");
+
+    const out = textOf(await client.callTool({ name: "digest_finish", arguments: { starred: [{ ref: "F4", gist: "Vacuum.", why: "Depth." }], following: [{ ref: "F2", gist: "Lag." }] } }));
+    expect(out).toContain("COUNTS: 5 new in Following · 2 read in full · 0 also new · 1 skipped · 0 unreadable");
+    const message = out.slice(out.indexOf(DIGEST_MARKER) + DIGEST_MARKER.length + 1);
+    expect(message).toContain("🔽 Left out 2 ranked below 50");
+    expect(message).not.toContain("Horoscope");
+    expect(message).not.toContain("Also new");
+    expect(JSON.parse(await readFile(join(dir, "state.json"), "utf8")).reported_posts).toHaveLength(5);
+    const runFile = JSON.parse(await readFile(join(dir, "runs", (await readdir(join(dir, "runs")))[0]!), "utf8"));
+    expect(runFile.rater).toMatchObject({ floor: 0.5, low: 2, floor_mode: "exclude" });
+    expect(textOf(await client.callTool({ name: "digest_status", arguments: {} }))).toContain("rank floor 50% (exclude)");
+  });
+
   it("falls back to sampling when Jev is chosen without a key, and says so", async () => {
     process.env.MEDIUM_READER_CLASSIFIER = "jev";
     delete process.env.OPENROUTER_API_KEY;

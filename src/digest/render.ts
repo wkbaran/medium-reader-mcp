@@ -86,7 +86,10 @@ export function renderDigest(run: RunFile, j: Judgments): RenderResult {
   const named = new Set([...j.starred, ...j.following, ...j.top_picks, ...j.for_you].map((s) => s.ref).concat(j.unreadable));
   const extraSkipped = new Set(j.extra_skipped.filter((r) => !named.has(r)));
   const skipped = run.items.filter((i) => (i.skipped || extraSkipped.has(i.ref)) && !named.has(i.ref));
-  const alsoNew = run.items.filter((i) => i.pool === "following" && !named.has(i.ref) && !i.skipped && !extraSkipped.has(i.ref));
+  // In exclude mode, posts below the rank floor that nobody picked are only counted, in the 🔽 line.
+  const excluded = run.rater.floor_mode === "exclude" ? run.items.filter((i) => i.low && !i.skipped && !named.has(i.ref) && !extraSkipped.has(i.ref)) : [];
+  const out = new Set(excluded.map((i) => i.ref));
+  const alsoNew = run.items.filter((i) => i.pool === "following" && !named.has(i.ref) && !i.skipped && !extraSkipped.has(i.ref) && !out.has(i.ref));
 
   const marks = (i: RunItem) => `${i.memberOnly ? " [member]" : ""}${preview.has(i.ref) ? " (preview only)" : ""}`;
   const byline = (i: RunItem) => md(i.author ?? "Unknown");
@@ -127,6 +130,7 @@ export function renderDigest(run: RunFile, j: Judgments): RenderResult {
   if (!blocks.length) return { message: "[SILENT]", counts };
 
   if (skipped.length) blocks.push(`🗑 Skipped ${skipped.length} as clickbait${mostly(skipped)}`);
+  if (excluded.length) blocks.push(`🔽 Left out ${excluded.length} ranked below ${Math.round((run.rater.floor ?? 0) * 100)}`);
   const header = `📰 **Medium** — ${run.counts.following_new} new in Following, ${readInFull} read in full (since ${formatLocal(run.since, run.tz)})`;
   return { message: [header, ...blocks].join("\n\n"), counts };
 }
