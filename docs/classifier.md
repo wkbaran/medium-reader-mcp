@@ -14,7 +14,7 @@ digest_begin ──► classifier ──► work list, best first ──► agen
 
 For every new headline (title, subtitle, author, publication) and your `interests.md`, a classifier returns:
 
-- **rank**, 0–1: how much you'd want to read it. `digest_begin` sorts each section of the work list by rank, best first, and shows it as a 0–100 column. When the list is too long for one tool result, the lowest-ranked rows are the ones cut. With `MEDIUM_READER_DIGEST_RANK_FLOOR` set, posts below the floor are listed in one compact line instead of full rows. They're still valid refs, and Following posts among them still appear under "Also new".
+- **rank**, 0–1: how much you'd want to read it. `digest_begin` sorts each section of the work list by rank, best first, and shows it as a 0–100 column. When the list is too long for one tool result, the lowest-ranked rows are the ones cut. With `MEDIUM_READER_DIGEST_RANK_FLOOR` set, posts below the floor are listed in one compact line instead of full rows. They're still valid refs, and Following posts among them still appear under "Also new". With `MEDIUM_READER_DIGEST_RANK_FLOOR_MODE=exclude` as well, they're left out entirely: not in the work list, so the agent never sees them, and not in the digest, which only counts them ("🔽 Left out 42 ranked below 80"). Following posts below the floor are still saved as reported, so they don't come back the next day. Use it to cut the agent's load and your reading when you accept losing some posts you'd have wanted; `analyze.mjs` shows how many at each floor.
 - **skip**, 0–1: the probability that it matches one of your Skip patterns. Posts at or above `MEDIUM_READER_DIGEST_SKIP_THRESHOLD` (default 0.7) never reach the agent and are counted in the digest's 🗑 line.
 
 Ranking matters more than skipping. A post ranked low is effectively filtered: the agent starts from the top and rarely gets that far. And ranking can't lose a good post outright, while a skip threshold can.
@@ -65,6 +65,7 @@ mcp_servers:
       # MEDIUM_READER_JEV_URL: https://openrouter.ai/api/alpha/decisions   # the default; any decisions-API endpoint
       # MEDIUM_READER_DIGEST_SKIP_THRESHOLD: 0.7   # from analyze.mjs
       # MEDIUM_READER_DIGEST_RANK_FLOOR: 0.1       # only if analyze.mjs recommends one
+      # MEDIUM_READER_DIGEST_RANK_FLOOR_MODE: exclude   # leave posts below the floor out instead of listing them compactly
 ```
 
 `digest_status` shows the classifier in use, and each run's status line looks like `Classifier jev (typesafe/jev-1.13): 118 ranked · 6 skipped (threshold 70%)`.
@@ -81,6 +82,7 @@ All settings are environment variables on the MCP server (in Hermes: `mcp_server
 | `MEDIUM_READER_JEV_MODEL` | `typesafe/jev-1.13` | The model id. Pin a version: thresholds are tuned against one |
 | `MEDIUM_READER_DIGEST_SKIP_THRESHOLD` | `0.7` | Posts with a skip probability at or above this are dropped. `1` effectively turns skipping off. |
 | `MEDIUM_READER_DIGEST_RANK_FLOOR` | `0` (off) | Posts ranked below this are listed apart (see above). Only with a ranking backend. |
+| `MEDIUM_READER_DIGEST_RANK_FLOOR_MODE` | `compact` | `exclude` leaves posts below the floor out of the work list and the digest, and only counts them. |
 
 `analyze.mjs` recommends values for the last two from your own labels.
 

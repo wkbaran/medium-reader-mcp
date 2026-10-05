@@ -208,6 +208,7 @@ Everything about it is in **[docs/classifier.md](docs/classifier.md)**: settings
 | `MEDIUM_READER_JEV_MODEL` | Model id (default `typesafe/jev-1.13`) |
 | `MEDIUM_READER_DIGEST_SKIP_THRESHOLD` | Skip probability at which a headline is dropped (default 0.7) |
 | `MEDIUM_READER_DIGEST_RANK_FLOOR` | Rank below which posts are collapsed to one line (default off) |
+| `MEDIUM_READER_DIGEST_RANK_FLOOR_MODE` | `exclude`: leave posts below the floor out entirely and only count them (default `compact`) |
 
 </details>
 

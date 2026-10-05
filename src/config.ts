@@ -90,6 +90,14 @@ export function digestRankFloor(): number {
   return envNumber("MEDIUM_READER_DIGEST_RANK_FLOOR", 0, 0, 1);
 }
 
+/**
+ * What happens to posts below the rank floor. `compact` (default): one compact line in the work list, still valid refs,
+ * Following ones still under "Also new". `exclude`: left out of the work list and the digest, only counted.
+ */
+export function digestRankFloorMode(): "compact" | "exclude" {
+  return process.env.MEDIUM_READER_DIGEST_RANK_FLOOR_MODE?.trim().toLowerCase() === "exclude" ? "exclude" : "compact";
+}
+
 export const DIGEST_FILES = {
   state: "state.json",
   interests: "interests.md",

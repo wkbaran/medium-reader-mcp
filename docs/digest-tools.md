@@ -50,7 +50,7 @@ The model only judges, at the two notes: which refs to read, and which to star a
 |---|---|
 | Titles, authors, publications, URLs, `[member]`, Medium's reasons ("Selected for you") | The server, from the run file |
 | Gists and *Why* lines | The main model, in `digest_finish`'s arguments. It rewrites them from the subagents' blocks; the subagents never call `digest_finish` |
-| Header counts, "Also new", the 🗑 line | The server |
+| Header counts, "Also new", the 🗑 and 🔽 lines | The server |
 | Layout and order | The server (`src/digest/render.ts`) |
 
 ## 1. `digest_begin`

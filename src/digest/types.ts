@@ -29,7 +29,11 @@ export interface RunItem {
   rank?: number;
   /** Dropped by the classifier (skip confidence ≥ threshold). */
   skipped?: boolean;
-  /** Ranked below the rank floor: listed in one compact line instead of a full row. Still committed and listed in "Also new". */
+  /**
+   * Ranked below the rank floor. In `compact` mode it's listed in one compact line instead of a full row, and Following
+   * ones still appear in "Also new". In `exclude` mode it's left out of the work list and the digest, and only counted.
+   * Following ones are committed either way.
+   */
   low?: boolean;
   /** Left out of the view to keep it under max_chars. Still committed and listed in "Also new". */
   omitted?: boolean;
@@ -83,6 +87,8 @@ export interface RunFile {
     /** Rank floor in effect (0 = off) and how many items fell below it. */
     floor?: number;
     low?: number;
+    /** What was done with items below the floor; absent means `compact` (older run files). */
+    floor_mode?: "compact" | "exclude";
   };
   history: { authors: Array<[string, number]>; publications: Array<[string, number]> };
   warnings: string[];

@@ -34,8 +34,10 @@ export interface BeginDeps {
   client: MediumClient;
   dir: string;
   classifier: Classifier;
-  /** Items ranked below this are listed compactly (0 = off). */
+  /** Items ranked below this are listed compactly, or left out (0 = off). */
   rankFloor?: number;
+  /** `compact` (default) or `exclude`; see digestRankFloorMode. */
+  rankFloorMode?: "compact" | "exclude";
   tz: { tz: string; warning?: string };
   style: RunFile["style"];
   threshold: number;
@@ -108,7 +110,7 @@ export async function digestBegin(opts: BeginOptions, deps: BeginDeps): Promise<
   const interests = await loadInterests(deps.dir);
   const c = deps.classifier;
   const floor = c.ranks ? (deps.rankFloor ?? 0) : 0;
-  const base = { threshold: deps.threshold, skipped: 0, classifier: c.name, ranked: 0, floor, low: 0 };
+  const base = { threshold: deps.threshold, skipped: 0, classifier: c.name, ranked: 0, floor, low: 0, ...(floor ? { floor_mode: deps.rankFloorMode ?? "compact" } : {}) };
   let rater: RunFile["rater"];
   if (!items.length) {
     rater = { ...base, status: "off", detail: "nothing to rate" };
@@ -237,7 +239,7 @@ export function raterLine(r: RunFile["rater"]): string {
   if (r.status === "unavailable") return `${who}: unavailable (${r.detail}); nothing skipped`;
   const parts = [`${r.skipped} skipped (threshold ${pct(r.threshold)})`];
   if (r.ranked) parts.unshift(`${r.ranked} ranked`);
-  if (r.floor) parts.push(`${r.low ?? 0} below rank floor ${pct(r.floor)}`);
+  if (r.floor) parts.push(`${r.low ?? 0} below rank floor ${pct(r.floor)}${r.floor_mode === "exclude" ? " (left out)" : ""}`);
   return `${who}: ${parts.join(" · ")}${r.status === "partial" ? `; ${r.detail}` : ""}`;
 }
 
@@ -265,8 +267,12 @@ export function renderView(run: RunFile, interests: Interests | null, maxChars: 
   // Unranked items (the classifier failed on them) sit in the middle rather than at either end.
   const byRank = (list: RunItem[]) => (ranked ? [...list].sort((a, b) => (b.rank ?? 0.5) - (a.rank ?? 0.5)) : list);
   const visible = byRank(run.items.filter((i) => !i.skipped && !i.low));
-  const low = byRank(run.items.filter((i) => i.low));
-  if (!visible.length && !low.length) return [...head, "", "Nothing new. Call digest_finish with no items."].join("\n");
+  // In exclude mode, posts below the floor aren't shown at all; the rater line counts them.
+  const low = run.rater.floor_mode === "exclude" ? [] : byRank(run.items.filter((i) => i.low));
+  if (!visible.length && !low.length) {
+    const what = run.items.some((i) => i.low) ? "Nothing new above the rank floor." : "Nothing new.";
+    return [...head, "", `${what} Call digest_finish with no items.`].join("\n");
+  }
 
   head.push(
     `Columns: ref${ranked ? " | rank (0–100, the classifier's guess at how much you'd want it; rows are sorted by it)" : ""} | title | author | publication | minutes | claps | flags (M member-only, R you read this author/publication) [| reason]`,
