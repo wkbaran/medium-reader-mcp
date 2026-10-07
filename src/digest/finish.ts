@@ -74,6 +74,8 @@ export interface FinishInput {
   preview_only: string[];
   unreadable: string[];
   extra_skipped: string[];
+  /** Sections the model looked at and chose to read nothing from. Without this, a section with listed posts and no picks is refused. */
+  empty_sections?: string[];
   dry_run: boolean;
 }
 
@@ -150,6 +152,54 @@ export function resolveJudgments(run: RunFile, input: FinishInput): { judgments:
   return { judgments, warnings };
 }
 
+const SECTION_POOL: Record<string, Pool> = { following: "following", top_picks: "top", top: "top", for_you: "for_you" };
+
+/**
+ * Refuse a finish that names nothing from a section whose work list had posts, unless the model said it left that section
+ * empty on purpose. Catches a model that planned to read a section and forgot (10/7: five T/Y posts ranked 52–94 dropped).
+ * Only posts the work list showed in full count: not classifier skips, posts below the rank floor, or ones omitted for size.
+ */
+export function checkEmptySections(run: RunFile, judgments: Judgments, emptySections: string[] = []): { error?: string; warnings: string[] } {
+  const warnings: string[] = [];
+  const declared = new Set<Pool>();
+  for (const raw of emptySections) {
+    const pool = SECTION_POOL[String(raw).trim().toLowerCase()];
+    if (pool) declared.add(pool);
+    else warnings.push(`empty_sections: "${raw}" isn't a section (following, top_picks, for_you); ignored.`);
+  }
+  const byRef = new Map(run.items.map((i) => [i.ref, i]));
+  const touched = new Set<Pool>();
+  for (const r of [
+    ...[...judgments.starred, ...judgments.following, ...judgments.top_picks, ...judgments.for_you].map((j) => j.ref),
+    ...judgments.preview_only,
+    ...judgments.unreadable,
+    ...judgments.extra_skipped,
+  ]) {
+    const item = byRef.get(r);
+    if (item) touched.add(item.pool);
+  }
+  const missing: string[] = [];
+  for (const pool of ["following", "top", "for_you"] as const) {
+    const listed = run.items.filter((i) => i.pool === pool && !i.skipped && !i.low && !i.omitted);
+    if (touched.has(pool)) {
+      if (declared.has(pool)) warnings.push(`${sectionName(pool)} is in empty_sections but has picks; kept the picks.`);
+      continue;
+    }
+    if (!listed.length || declared.has(pool)) continue;
+    const best = [...listed].sort((a, b) => (b.rank ?? -1) - (a.rank ?? -1)).slice(0, 5);
+    const refs = best.map((i) => (i.rank === undefined ? i.ref : `${i.ref} (${Math.round(i.rank * 100)})`)).join(", ");
+    missing.push(`${sectionName(pool)}: ${listed.length} listed, none named (best: ${refs})`);
+  }
+  if (!missing.length) return { warnings };
+  return {
+    warnings,
+    error:
+      `Nothing was named from these sections, though the work list showed posts there: ${missing.join("; ")}. ` +
+      "Nothing was saved. If you meant to read them, have subagents read them and call digest_finish again with the results. " +
+      'If you looked and none were worth reading, call again with the same arguments plus empty_sections, e.g. ["top_picks", "for_you"].',
+  };
+}
+
 function sectionName(p: Pool): string {
   return p === "following" ? "following" : p === "top" ? "top_picks" : "for_you";
 }
@@ -178,6 +228,9 @@ export async function digestFinish(dir: string, input: FinishInput, opts: { keep
   }
 
   const { judgments, warnings } = resolveJudgments(run, input);
+  const sections = checkEmptySections(run, judgments, input.empty_sections);
+  if (sections.error) throw new DigestInputError(sections.error);
+  warnings.push(...sections.warnings);
   const { message, counts } = renderDigest(run, judgments);
   const head: string[] = [];
   if (input.dry_run) {

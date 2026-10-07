@@ -1,7 +1,7 @@
 ---
 name: medium-digest
 description: Daily Medium digest in three sections (the Following feed, Medium's top picks, and personal "For you" recommendations), with picks read in full by subagents. Uses the medium-reader MCP server's digest tools.
-version: 2.2.0
+version: 2.3.0
 platforms: [linux]
 metadata:
   hermes:
@@ -77,6 +77,7 @@ Call `digest_finish` once with:
 - `preview_only`: refs whose ACCESS was preview-only.
 - `unreadable`: refs that couldn't be read after the retry. They're listed under ⚠ and never retried.
 - `extra_skipped`: the clickbait refs from step 2.
+- `empty_sections`: a section you decided in step 2 to read nothing from (`"following"`, `"top_picks"` or `"for_you"`). If `digest_finish` refuses because a section has nothing named, you most likely skipped a read batch: read the refs it names, then call again with them. Add the section to `empty_sections` only if you had already decided against it.
 
 The server checks the refs, writes the digest and saves state. If it reports unknown refs, fix only those entries and call it again; never repeat an identical call. A result starting "STATE SAVED: already saved" is fine.
 

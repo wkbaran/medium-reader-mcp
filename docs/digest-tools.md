@@ -229,11 +229,13 @@ The main model gives its verdicts by ref. The server checks every ref against th
 | `preview_only` | ref[] | Posts whose `- Access:` line said preview-only |
 | `unreadable` | ref[] | Posts that couldn't be read; listed under ⚠ and never retried |
 | `extra_skipped` | ref[] | Clickbait the classifier missed; counted in the 🗑 line |
+| `empty_sections` | section[] | `following`, `top_picks`, `for_you`: sections the model looked at and chose to read nothing from |
 | `dry_run` | boolean | Render and check, but save nothing |
 
 What happens to bad input:
 
 - **An unknown ref** fails the whole call, and nothing is saved, so the model can fix it and call again.
+- **A section with nothing named** fails the call too, if the work list showed posts there (not counting classifier skips or posts below the rank floor). The error names the best-ranked refs. The model either reads them or calls again with that section in `empty_sections`. This catches a model that planned a batch of reads and forgot it, which Qwen did on 2026-10-07 with five Top picks and For you posts ranked 52–94.
 - **A post in the wrong section** is moved to its own section, with a warning.
 - **A post listed twice** keeps its first entry.
 - **A gist that's too long** is cut at a clause or word break.

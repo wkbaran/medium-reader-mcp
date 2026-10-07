@@ -150,6 +150,12 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
         preview_only: refList("Posts whose Access line said preview-only."),
         unreadable: refList("Posts that couldn't be read. They're listed under ⚠ and never retried."),
         extra_skipped: refList("Clickbait the rater missed; counted in the 🗑 line and left out of Also new."),
+        empty_sections: lenient(z.array(z.string()))
+          .default([])
+          .describe(
+            'Sections you looked at and chose to read nothing from: "following", "top_picks", "for_you". ' +
+              "Without it, a call that names nothing from a section whose work list had posts is refused, so a forgotten batch of reads is caught.",
+          ),
         dry_run: z.boolean().default(false).describe("Render and check without saving anything."),
       },
       annotations: { ...localOnly, idempotentHint: true },

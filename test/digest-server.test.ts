@@ -208,7 +208,12 @@ describe("digest tools", () => {
     expect(view).toMatch(/\(F\d+–F400, Y26–Y225 omitted for size\)/);
     expect(view).toContain("\nY25 | ");
 
-    const out = textOf(await client.callTool({ name: "digest_finish", arguments: {} }));
+    // Naming nothing while the work list showed posts is refused until the sections are declared empty.
+    const refused = await client.callTool({ name: "digest_finish", arguments: {} });
+    expect(refused.isError).toBe(true);
+    expect(textOf(refused)).toMatch(/following: \d+ listed, none named .*for_you: 25 listed, none named \(best: Y1, .*Nothing was saved/);
+    expect(JSON.parse(await readFile(join(dir, "state.json"), "utf8")).reported_posts).toHaveLength(0);
+    const out = textOf(await client.callTool({ name: "digest_finish", arguments: { empty_sections: ["following", "top_picks", "for_you"] } }));
     expect(out).toContain("COUNTS: 400 new in Following · 0 read in full · 400 also new");
     expect(out.length).toBeLessThan(40_000);
     const state = JSON.parse(await readFile(join(dir, "state.json"), "utf8"));
@@ -298,6 +303,37 @@ describe("digest tools", () => {
     const runFile = JSON.parse(await readFile(join(dir, "runs", (await readdir(join(dir, "runs")))[0]!), "utf8"));
     expect(runFile.rater).toMatchObject({ floor: 0.5, low: 2, floor_mode: "exclude" });
     expect(textOf(await client.callTool({ name: "digest_status", arguments: {} }))).toContain("rank floor 50% (exclude)");
+  });
+
+  it("refuses a finish that forgets a listed section, ignoring posts below the floor, until it's declared empty", async () => {
+    process.env.MEDIUM_READER_CLASSIFIER = "jev";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.MEDIUM_READER_DIGEST_RANK_FLOOR = "0.5";
+    process.env.MEDIUM_READER_DIGEST_RANK_FLOOR_MODE = "exclude";
+    vi.stubGlobal("fetch", async (_url: string, init: { body: string }) => {
+      const t = JSON.parse(init.body).state.headline.title as string;
+      const score = t.includes("Postgres") ? 3 : t.includes("Security") ? 2.8 : 0.3;
+      return new Response(JSON.stringify({ answers: { importance: { type: "score", score }, skip_ctx: { type: "noul", noul: 0.1 } } }));
+    });
+    await writeFile(join(dir, "interests.md"), INTERESTS);
+    await writeFile(join(dir, "state.json"), JSON.stringify({ last_run: "2026-09-29T12:00:00Z", reported_posts: [] }, null, 2) + "\n");
+    // For you starts at position 25, so pad the first 25.
+    const forYou = [...Array.from({ length: 25 }, (_, i) => rawPost(hex("c", i))), rawPost(hex("b", 1), { title: "Horoscope" }), rawPost(hex("b", 2), { title: "Security practices that backfire" })];
+    const { client } = await connect({ FollowingFeed: followingList([recent(hex("f", 1), { title: "Postgres vacuum" })]), RecommendedFeed: forYouList(forYou), ReadingHistory: history([]) });
+    const view = textOf(await client.callTool({ name: "digest_begin", arguments: {} }));
+    const y = view.match(/\n(Y\d+) \| 93 \| Security/)![1]!;
+
+    const following = [{ ref: "F1", gist: "Vacuum." }];
+    const refused = await client.callTool({ name: "digest_finish", arguments: { following } });
+    expect(refused.isError).toBe(true);
+    // Only the ranked-up post counts; the one below the floor was never listed.
+    expect(textOf(refused)).toContain(`for_you: 1 listed, none named (best: ${y} (93))`);
+    expect(textOf(refused)).not.toContain("following:");
+    expect(JSON.parse(await readFile(join(dir, "state.json"), "utf8")).reported_posts).toHaveLength(0);
+
+    const out = textOf(await client.callTool({ name: "digest_finish", arguments: { following, empty_sections: '["for_you", "following", "bogus"]' } }));
+    expect(out).toMatch(/^STATE SAVED: 1 ids added/);
+    expect(out).toContain('WARNINGS: empty_sections: "bogus" isn\'t a section (following, top_picks, for_you); ignored. following is in empty_sections but has picks; kept the picks.');
   });
 
   it("falls back to sampling when Jev is chosen without a key, and says so", async () => {
