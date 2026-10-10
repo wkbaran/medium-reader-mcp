@@ -57,6 +57,8 @@ The model only judges, at the two notes: which refs to read, and which to star a
 
 Collects everything new since the last run, ranks it, and writes a run file. It saves no state. Call it with no arguments; the others are for testing and unusual days.
 
+A second call while the latest run is unfinished and under 90 minutes old returns that run (same refs, nothing fetched) instead of starting another, so a retry after a timeout or a subagent calling `digest_begin` can't renumber the posts under the main model. The continued view leaves out the "then call `digest_finish`" line. Passing `since` always starts a new run.
+
 <!-- args: digest_begin -->
 | Field | Default | Meaning |
 |---|---|---|

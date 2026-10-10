@@ -347,6 +347,48 @@ describe("digest tools", () => {
     expect(view).toContain("MEDIUM_READER_CLASSIFIER=jev but neither MEDIUM_READER_JEV_API_KEY nor OPENROUTER_API_KEY is set; used sampling.");
   });
 
+  it("continues an open run instead of starting another, until it is stale, finished or given a since", async () => {
+    await writeFile(join(dir, "state.json"), JSON.stringify({ last_run: "2026-09-29T12:00:00Z", reported_posts: [] }, null, 2) + "\n");
+    const following = [recent(hex("f", 1), { title: "Postgres vacuum, explained" }), recent(hex("f", 2))];
+    const forYou = Array.from({ length: 120 }, (_, i) => rawPost(hex("b", i)));
+    const { client, requests } = await connect({ FollowingFeed: followingList(following), RecommendedFeed: forYouList(forYou), ReadingHistory: history([]) });
+    const begin = () => client.callTool({ name: "digest_begin", arguments: {} });
+    const runs = async () => (await readdir(join(dir, "runs"))).sort();
+
+    const first = textOf(await begin());
+    const runId = first.match(/^Medium digest run (\S+)/)![1]!;
+    const fetched = requests.length;
+    expect(first).toContain("Next: shortlist");
+
+    // a second begin (a retry, or a subagent) gets the same run, fetches nothing and is not told to finish
+    const second = textOf(await begin());
+    expect(requests.length).toBe(fetched);
+    expect(await runs()).toEqual([`${runId}.json`]);
+    expect(second).toContain(`Continuing the open digest run ${runId}`);
+    expect(second).toContain(`Medium digest run ${runId}`);
+    expect(second).toContain("\nF1 | Postgres vacuum, explained |");
+    expect(second).not.toContain("Next: shortlist");
+
+    // an explicit since asks for a new run
+    const forced = textOf(await client.callTool({ name: "digest_begin", arguments: { since: "2026-09-28T00:00:00Z" } }));
+    expect(forced).not.toContain("Continuing");
+    expect(await runs()).toHaveLength(2);
+    const forcedId = forced.match(/^Medium digest run (\S+)/)![1]!;
+
+    // a run that started 90 minutes ago or more is stale and is replaced
+    const file = join(dir, "runs", `${forcedId}.json`);
+    const run = JSON.parse(await readFile(file, "utf8"));
+    run.started_at = new Date(Date.now() - 91 * 60_000).toISOString().replace(/\.\d+Z$/, "Z");
+    await writeFile(file, JSON.stringify(run));
+    expect(textOf(await begin())).not.toContain("Continuing");
+    expect(await runs()).toHaveLength(3);
+
+    // once the run is finished, the next begin starts a new one
+    expect(textOf(await client.callTool({ name: "digest_finish", arguments: { following: [{ ref: "F1", gist: "x" }], empty_sections: ["top_picks", "for_you"] } }))).toContain("STATE SAVED");
+    expect(textOf(await begin())).not.toContain("Continuing");
+    expect(await runs()).toHaveLength(4);
+  });
+
   it("says nothing is new on a quiet day and finishes with [SILENT]", async () => {
     const { client } = await connect({ FollowingFeed: followingList([]), RecommendedFeed: forYouList([]), ReadingHistory: history([]) });
     const view = textOf(await client.callTool({ name: "digest_begin", arguments: {} }));

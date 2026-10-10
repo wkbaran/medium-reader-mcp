@@ -3,7 +3,7 @@ import { parseSince } from "../tool-util.js";
 import { classifySafely, type Classifier } from "../classifier/index.js";
 import { loadInterests, type Interests } from "./interests.js";
 import { cut, formatClaps, formatLocal, shortReason } from "./render.js";
-import { isoSeconds, loadState, newRunId, pruneRuns, writeRun } from "./state.js";
+import { isoSeconds, listRunIds, loadState, newRunId, pruneRuns, readRun, writeRun } from "./state.js";
 import { POOL_PREFIX, type Pool, type RunFile, type RunItem } from "./types.js";
 
 export interface BeginOptions {
@@ -46,8 +46,34 @@ export interface BeginDeps {
   budgetMs?: number;
 }
 
+/** A begin within this long of an unfinished run's start continues that run instead of starting another. */
+export const RESUME_MINUTES = 90;
+
+/** The latest run, if it isn't committed yet and started under RESUME_MINUTES ago. */
+async function openRun(dir: string, now: Date): Promise<RunFile | null> {
+  const id = (await listRunIds(dir).catch(() => [] as string[])).at(-1);
+  const run = id ? await readRun<RunFile>(dir, id) : null;
+  if (!run || run.committed_at || !Array.isArray(run.items)) return null;
+  const started = Date.parse(run.started_at);
+  return Number.isNaN(started) || now.getTime() - started >= RESUME_MINUTES * 60_000 ? null : run;
+}
+
 export async function digestBegin(opts: BeginOptions, deps: BeginDeps): Promise<{ run: RunFile; view: string }> {
   const now = deps.now ?? (() => new Date());
+
+  // A second begin while a run is open continues that run. read_post resolves refs against the
+  // latest run, so a new run from a retry or a subagent (which would re-fetch and could renumber the
+  // posts) would send the main model's refs to the wrong posts. An explicit `since` asks for a new run.
+  const open = opts.since ? null : await openRun(deps.dir, now());
+  if (open) {
+    const header =
+      `Continuing the open digest run ${open.run_id} (started ${open.started_at}; nothing new was fetched). ` +
+      `If you were asked to read posts for someone else, call only read_post and reply with what you were asked for; ` +
+      `only the model writing the digest calls digest_begin or digest_finish.\n\n`;
+    const view = renderView(open, await loadInterests(deps.dir), opts.max_chars).replace(/\nNext: [^\n]*$/, "");
+    return { run: open, view: header + view };
+  }
+
   const user = await deps.client.whoami(); // an expired session fails here, before anything else
   const startedAt = now();
   const warnings: string[] = deps.tz.warning ? [deps.tz.warning] : [];

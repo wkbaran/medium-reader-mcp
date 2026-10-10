@@ -90,7 +90,7 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
       title: "Start a digest run",
       description:
         "Step 1 of the daily digest. Collects posts new since the last digest (Following, Medium's top picks, For you), drops ones already reported, " +
-        "has the headline classifier rank them and drop confident skips, and returns a plain-text work list with refs (F1, T1, Y1). Saves nothing but a run file; call digest_finish to commit. Call it once, with no arguments.",
+        "has the headline classifier rank them and drop confident skips, and returns a plain-text work list with refs (F1, T1, Y1). Saves nothing but a run file; call digest_finish to commit. Call it once, with no arguments. A second call while the run is unfinished returns the same run.",
       inputSchema: {
         since: z.string().optional().describe('Override the start point: ISO time or "48h". Default: last_run from the state file.'),
         following_max: z.number().int().min(1).max(500).default(BEGIN_DEFAULTS.following_max),
