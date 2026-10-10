@@ -143,6 +143,8 @@ You don't have to write `interests.md` from scratch, or guess what's missing fro
 
 Ask your agent something like "propose a new interests.md from my Medium activity". To draft without an agent, use `tools/classifier/propose.mjs --model <model>`, which works with any OpenAI-compatible endpoint (OpenRouter by default).
 
+OpenRouter isn't required. To bill a Claude model to your own Anthropic API key, use Anthropic's OpenAI-compatible endpoint: `PROPOSE_API_KEY=$ANTHROPIC_API_KEY node --env-file=.env tools/classifier/propose.mjs --base https://api.anthropic.com/v1 --model <Anthropic model id>`. Jev is the only part of this that needs OpenRouter.
+
 **Test the proposal before adopting it.** Draft from half your labels and test on the other half, so the proposal isn't graded on the labels it was written from:
 
 ```bash
