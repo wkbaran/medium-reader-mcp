@@ -1,3 +1,4 @@
+import { pacedFetch, paceFromEnv, RateLimitedError, type PaceOptions } from "paced-fetch";
 import { Agent, fetch as undiciFetch } from "undici";
 import { GRAPHQL_URL, SESSION_COOKIE, USER_AGENT, USER_COOKIE } from "../config.js";
 import type { Session } from "../auth/credentials.js";
@@ -50,10 +51,25 @@ export interface HttpOptions {
   session?: Session;
   fetch?: FetchLike;
   timeoutMs?: number;
+  /** Retries after a 429, or after a network error or 5xx on a query. Overrides MEDIUM_READER_RETRIES. */
   maxRetries?: number;
+  /** Read for MEDIUM_READER_RATE, MEDIUM_READER_CONCURRENCY and the rest (see paced-fetch). Defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
   /** Injected so tests don't actually wait on backoff. */
   sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
 }
+
+/**
+ * Pacing for Medium, which publishes no rate limit: 2 retries, 0.5 s then 1 s
+ * (with jitter) or Medium's Retry-After, as before paced-fetch. Every value can
+ * be changed with MEDIUM_READER_RATE, MEDIUM_READER_CONCURRENCY,
+ * MEDIUM_READER_MIN_GAP, MEDIUM_READER_RETRIES and MEDIUM_READER_MAX_RETRY_WAIT.
+ */
+export const MEDIUM_PACE: PaceOptions = { retries: 2, backoffMs: [500, 1_000], maxRetryWaitMs: 60_000 };
+
+/** Requests that are mutations, so paced-fetch never sends them twice after a 5xx or network error. */
+const mutations = new WeakSet<RequestInit>();
 
 export interface GqlError {
   message: string;
@@ -75,15 +91,19 @@ export interface GqlOptions {
  */
 export class MediumHttp {
   private readonly fetchImpl: FetchLike;
-  private readonly timeoutMs: number;
-  private readonly maxRetries: number;
-  private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(private readonly opts: HttpOptions = {}) {
-    this.fetchImpl = opts.fetch ?? http1Fetch;
-    this.timeoutMs = opts.timeoutMs ?? 20_000;
-    this.maxRetries = opts.maxRetries ?? 2;
-    this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    const { pace, warnings } = paceFromEnv("MEDIUM_READER", MEDIUM_PACE, opts.env);
+    // stdout is the MCP channel; stderr is where hosts show server logs.
+    for (const w of warnings) console.error(w);
+    this.fetchImpl = pacedFetch({
+      fetch: opts.fetch ?? http1Fetch,
+      defaults: { ...pace, ...(opts.maxRetries !== undefined ? { retries: opts.maxRetries } : {}), timeoutMs: opts.timeoutMs ?? 20_000 },
+      // Every call is a GraphQL POST; only queries are safe to send twice.
+      isIdempotent: (_method, _url, init) => !(init && mutations.has(init)),
+      sleep: opts.sleep,
+      random: opts.random,
+    }) as FetchLike;
   }
 
   get authenticated(): boolean {
@@ -122,32 +142,16 @@ export class MediumHttp {
     return result.data;
   }
 
+  /** One GraphQL request, paced and retried by paced-fetch (a mutation only after a 429). */
   private async request(body: string, isMutation: boolean): Promise<Response> {
-    for (let attempt = 0; ; attempt++) {
-      let res: Response;
-      try {
-        res = await this.fetchImpl(GRAPHQL_URL, {
-          method: "POST",
-          headers: this.headers(),
-          body,
-          redirect: "manual",
-          signal: AbortSignal.timeout(this.timeoutMs),
-        });
-      } catch (err) {
-        if (!isMutation && attempt < this.maxRetries && isTransient(err)) {
-          await this.sleep(backoff(attempt));
-          continue;
-        }
-        const msg = err instanceof Error ? err.message : String(err);
-        throw new MediumError(`Request to Medium failed: ${msg}`);
-      }
-      const retryable = res.status === 429 || (!isMutation && res.status >= 500);
-      if (retryable && attempt < this.maxRetries) {
-        await res.body?.cancel();
-        await this.sleep(retryAfterMs(res) ?? backoff(attempt));
-        continue;
-      }
-      return res;
+    const init: RequestInit = { method: "POST", headers: this.headers(), body, redirect: "manual" };
+    if (isMutation) mutations.add(init);
+    try {
+      return await this.fetchImpl(GRAPHQL_URL, init);
+    } catch (err) {
+      if (err instanceof RateLimitedError) throw new MediumError(`Medium is rate-limiting requests: ${err.message}`, 429);
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new MediumError(`Request to Medium failed: ${msg}`);
     }
   }
 
@@ -169,28 +173,6 @@ export class MediumHttp {
 
 function isAuthError(e: GqlError): boolean {
   return e.extensions?.code === "UNAUTHENTICATED" || /not (logged|signed) in|must be logged in|unauthori[sz]ed/i.test(e.message);
-}
-
-function isTransient(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return (
-    err.name === "TimeoutError" ||
-    err.name === "AbortError" ||
-    /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(err.message + String((err as { cause?: unknown }).cause ?? ""))
-  );
-}
-
-function backoff(attempt: number): number {
-  return 500 * 2 ** attempt;
-}
-
-function retryAfterMs(res: Response): number | null {
-  const value = res.headers.get("retry-after");
-  if (!value) return null;
-  const secs = Number(value);
-  if (Number.isFinite(secs)) return Math.min(secs * 1000, 30_000);
-  const date = Date.parse(value);
-  return Number.isNaN(date) ? null : Math.min(Math.max(date - Date.now(), 0), 30_000);
 }
 
 function detail(text: string): string {

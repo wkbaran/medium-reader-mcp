@@ -63,7 +63,7 @@ beforeEach(async () => {
   process.env.MEDIUM_READER_HOME = await mkdtemp(join(tmpdir(), "medium-reader-"));
   dir = await mkdtemp(join(tmpdir(), "medium-digest-"));
   process.env.MEDIUM_READER_DIGEST_DIR = dir;
-  process.env.MEDIUM_READER_DIGEST_TZ = "America/Denver";
+  process.env.MEDIUM_READER_DIGEST_TZ = "America/New_York";
   delete process.env.MEDIUM_SID;
   delete process.env.MEDIUM_UID;
   delete process.env.MEDIUM_COOKIE;
@@ -122,7 +122,7 @@ describe("digest tools", () => {
     const begin = await client.callTool({ name: "digest_begin", arguments: {} });
     expect(begin.isError).toBeFalsy();
     const view = textOf(begin);
-    expect(view).toMatch(/^Medium digest run \d{8}T\d{6}Z · member: yes\nSince: Tue, Sep 29, 6:00 AM MDT \(2026-09-29T12:00:00Z\)/);
+    expect(view).toMatch(/^Medium digest run \d{8}T\d{6}Z · member: yes\nSince: Tue, Sep 29, 8:00 AM EDT \(2026-09-29T12:00:00Z\)/);
     expect(view).toContain("Following: 4 new (1 already reported) · Top picks: 24 (1 dropped) · For you: 74 from positions 25–100 (1 dropped)");
     expect(view).toContain("Classifier sampling: 1 skipped (threshold 70%)");
     expect(view).toContain("You read: @fav ×1");
@@ -166,7 +166,7 @@ describe("digest tools", () => {
     const out = textOf(await client.callTool({ name: "digest_finish", arguments: picks }));
     expect(out).toMatch(/^STATE SAVED: 7 ids added \(0 already present\), 8 total, last_run \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\nCOUNTS: 4 new in Following · 4 read in full · 1 also new · 1 skipped · 1 unreadable\nWARNINGS: none\n/);
     const message = out.split(DIGEST_MARKER + "\n")[1]!;
-    expect(message).toMatch(/^📰 \*\*Medium\*\* — 4 new in Following, 4 read in full \(since Tue, Sep 29, 6:00 AM MDT\)\n\n⭐ \*\*Read in full\*\*\n1\. \*\*Postgres vacuum, explained\*\*/);
+    expect(message).toMatch(/^📰 \*\*Medium\*\* — 4 new in Following, 4 read in full \(since Tue, Sep 29, 8:00 AM EDT\)\n\n⭐ \*\*Read in full\*\*\n1\. \*\*Postgres vacuum, explained\*\*/);
     expect(message).toContain("_Also new_\n**Authors** (1) · [Post f00000000004]");
     expect(message).toMatch(/🗑 Skipped 1 as clickbait$/);
 

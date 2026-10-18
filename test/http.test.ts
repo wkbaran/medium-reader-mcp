@@ -55,6 +55,21 @@ describe("MediumHttp", () => {
     expect(mutations).toBe(1);
   });
 
+  it("reads MEDIUM_READER_RETRIES, and fails at once on a Retry-After over a minute", async () => {
+    let calls = 0;
+    const { fetch } = fakeMedium({ Q: () => (++calls, { status: 503, raw: "busy" }), L: () => (++calls, { status: 429, raw: "slow down", headers: { "retry-after": "600" } }) });
+    const none = new MediumHttp({ fetch, env: { MEDIUM_READER_RETRIES: "0" }, sleep: noSleep });
+    await expect(none.gql("query Q { ok }")).rejects.toThrow(/HTTP 503/);
+    expect(calls).toBe(1);
+    calls = 0;
+    const http = new MediumHttp({ fetch, env: {}, sleep: noSleep });
+    const err = await http.gql("query L { ok }").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediumError);
+    expect((err as MediumError).status).toBe(429);
+    expect((err as Error).message).toMatch(/Medium is rate-limiting requests: medium\.com is rate-limiting requests until/);
+    expect(calls).toBe(1);
+  });
+
   it("maps 401 to an expired session when one was sent", async () => {
     const { fetch } = fakeMedium({ V: { status: 401, raw: "{}" } });
     const err = await new MediumHttp({ session: SESSION, fetch }).gql("query V { viewer { id } }").catch((e: unknown) => e);

@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { parseDuration } from "paced-fetch";
 
 /** Root directory for everything this tool persists. Override with MEDIUM_READER_HOME. */
 export function configDir(): string {
@@ -71,6 +72,18 @@ function envNumber(name: string, fallback: number, min: number, max: number): nu
 }
 
 /** How many reported post ids state.json keeps (newest). */
+/**
+ * How long digest_begin may spend, fetching and rating included (MEDIUM_READER_DIGEST_FETCH_BUDGET,
+ * e.g. "10min"). The default, 170 s, fits an agent host's 300 s tool timeout.
+ */
+export function digestFetchBudget(env: NodeJS.ProcessEnv = process.env): { ms: number; warning?: string } {
+  const raw = env.MEDIUM_READER_DIGEST_FETCH_BUDGET?.trim();
+  const parsed = raw ? parseDuration(raw) : null;
+  if (!raw) return { ms: 170_000 };
+  if (parsed && parsed >= 30_000) return { ms: parsed };
+  return { ms: 170_000, warning: `MEDIUM_READER_DIGEST_FETCH_BUDGET=${raw} isn't a duration of at least 30 s; using 170 s.` };
+}
+
 export function digestKeep(): number {
   return Math.round(envNumber("MEDIUM_READER_DIGEST_KEEP", 3000, 100, 100_000));
 }

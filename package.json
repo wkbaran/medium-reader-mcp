@@ -1,6 +1,6 @@
 {
   "name": "medium-reader-mcp",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "MCP server for reading your Medium feed and member-only posts",
   "license": "MIT",
   "author": "Bill Baran",
@@ -35,6 +35,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",
     "job-ledger": "^0.2.0",
+    "paced-fetch": "^0.1.0",
     "undici": "^7.30.0",
     "zod": "^4.6.5"
   },

@@ -7,7 +7,7 @@ import { classifierFromEnv } from "../classifier/index.js";
 import { proposalSummary, tidyProposal } from "../classifier/proposal.js";
 import { samplingFn } from "../classifier/mcp.js";
 import { SamplingRater } from "../classifier/sampling.js";
-import { digestKeep, digestRankFloor, digestRankFloorMode, digestSkipThreshold, digestStyle, digestTimezone } from "../config.js";
+import { digestFetchBudget, digestKeep, digestRankFloor, digestRankFloorMode, digestSkipThreshold, digestStyle, digestTimezone } from "../config.js";
 import type { ClientProvider } from "../server.js";
 import { errorText, run, text } from "../tool-util.js";
 import { BEGIN_DEFAULTS, digestBegin } from "./collect.js";
@@ -108,15 +108,18 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
         const client = await provider.get();
         const { classifier, warning } = classifierFromEnv("MEDIUM_READER", samplingFn(server));
         const tz = digestTimezone();
+        const budget = digestFetchBudget();
+        const notes = [tz.warning, warning, budget.warning].filter(Boolean).join(" ");
         const { view } = await digestBegin(args, {
           client,
           dir,
           classifier,
           rankFloor: digestRankFloor(),
           rankFloorMode: digestRankFloorMode(),
-          tz: warning ? { ...tz, warning: [tz.warning, warning].filter(Boolean).join(" ") } : tz,
+          tz: notes ? { ...tz, warning: notes } : tz,
           style: digestStyle(),
           threshold: digestSkipThreshold(),
+          budgetMs: budget.ms,
         });
         return text(view);
       }),

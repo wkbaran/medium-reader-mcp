@@ -26,7 +26,7 @@ function runWith(items: RunItem[]): RunFile {
     started_at: "2026-10-02T12:15:31Z",
     since: "2026-10-01T12:15:24Z",
     member: true,
-    tz: "America/Denver",
+    tz: "America/New_York",
     style: "discord",
     counts: { following_new: items.filter((i) => i.pool === "following").length, following_reported: 0, top: 0, top_dropped: 0, for_you: 0, for_you_dropped: 0, for_you_range: [25, 100] },
     rater: { status: "ok", threshold: 0.7, skipped: 0 },
@@ -40,9 +40,9 @@ const none: Judgments = { starred: [], following: [], top_picks: [], for_you: []
 
 describe("formatLocal", () => {
   it("converts to the zone, including daylight saving and the date change", () => {
-    expect(formatLocal("2026-10-02T12:00:24Z", "America/Denver")).toBe("Fri, Oct 2, 6:00 AM MDT");
-    expect(formatLocal("2026-09-25T02:40:30Z", "America/Denver")).toBe("Thu, Sep 24, 8:40 PM MDT");
-    expect(formatLocal("2026-11-20T02:40:30Z", "America/Denver")).toBe("Thu, Nov 19, 7:40 PM MST");
+    expect(formatLocal("2026-10-02T12:00:24Z", "America/New_York")).toBe("Fri, Oct 2, 8:00 AM EDT");
+    expect(formatLocal("2026-09-25T02:40:30Z", "America/New_York")).toBe("Thu, Sep 24, 10:40 PM EDT");
+    expect(formatLocal("2026-11-20T02:40:30Z", "America/New_York")).toBe("Thu, Nov 19, 9:40 PM EST");
     expect(formatLocal("2026-12-02T12:00:00Z", "UTC")).toBe("Wed, Dec 2, 12:00 PM UTC");
   });
 });
@@ -108,7 +108,7 @@ describe("renderDigest", () => {
     const { message, counts } = renderDigest(runWith(items), j);
     expect(counts).toEqual({ named: 5, readInFull: 4, alsoNew: 0, skipped: 4, unreadable: 1 });
     expect(message).toMatchInlineSnapshot(`
-      "📰 **Medium** — 6 new in Following, 4 read in full (since Thu, Oct 1, 6:15 AM MDT)
+      "📰 **Medium** — 6 new in Following, 4 read in full (since Thu, Oct 1, 8:15 AM EDT)
 
       ⭐ **Read in full**
       1. **Post F1** — Author F1, Pub [member] (preview only)
