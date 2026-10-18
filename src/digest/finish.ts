@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { insideDir, isoSeconds } from "job-ledger";
-import { DIGEST_FILES } from "../config.js";
+import { DIGEST_FILES, type DigestLimits } from "../config.js";
 import { parsePostId } from "../medium/api.js";
 import { raterLine } from "./collect.js";
 import { formatLocal, renderDigest } from "./render.js";
@@ -9,7 +9,8 @@ import type { Judgment, Judgments, Pool, RunFile, RunItem } from "./types.js";
 
 export const DIGEST_MARKER = "===== DIGEST: reply with exactly the text below, nothing before or after =====";
 const REF = /^[FTY]\d{1,3}$/i;
-const LIMITS = { starred: 8, starGist: 400, why: 250, gist: 280 };
+/** The defaults of digestLimits() in config.ts. */
+export const DEFAULT_LIMITS: DigestLimits = { starred: 8, starGist: 400, why: 250, gist: 280 };
 
 /**
  * Shorten text to at most n characters (including the "…") at a readable break: the
@@ -81,7 +82,7 @@ export interface FinishInput {
 }
 
 /** Check the model's picks against the run and normalize them. Unknown refs throw; everything else is fixed up with a warning. */
-export function resolveJudgments(run: RunFile, input: FinishInput): { judgments: Judgments; warnings: string[] } {
+export function resolveJudgments(run: RunFile, input: FinishInput, limits: DigestLimits = DEFAULT_LIMITS): { judgments: Judgments; warnings: string[] } {
   const warnings: string[] = [];
   const unknown: string[] = [];
   const resolve = (raw: string): RunItem | undefined => {
@@ -107,10 +108,10 @@ export function resolveJudgments(run: RunFile, input: FinishInput): { judgments:
       continue;
     }
     used.add(item.ref);
-    const j: Judgment = { ref: item.ref, gist: trimmed(s.gist, LIMITS.starGist, item.ref, "gist"), why: trimmed(s.why, LIMITS.why, item.ref, "why") };
-    if (starred.length >= LIMITS.starred) {
-      warnings.push(`More than ${LIMITS.starred} starred; ${item.ref} moved to its section.`);
-      sectionOf[item.pool].push({ ref: j.ref, gist: trimmed(j.gist, LIMITS.gist, item.ref, "gist") });
+    const j: Judgment = { ref: item.ref, gist: trimmed(s.gist, limits.starGist, item.ref, "gist"), why: trimmed(s.why, limits.why, item.ref, "why") };
+    if (starred.length >= limits.starred) {
+      warnings.push(`More than ${limits.starred} starred; ${item.ref} moved to its section.`);
+      sectionOf[item.pool].push({ ref: j.ref, gist: trimmed(j.gist, limits.gist, item.ref, "gist") });
     } else starred.push(j);
   }
   const lists: Array<[Pool, FinishInput["following"]]> = [
@@ -128,7 +129,7 @@ export function resolveJudgments(run: RunFile, input: FinishInput): { judgments:
       }
       used.add(item.ref);
       if (item.pool !== pool) warnings.push(`${item.ref} belongs in ${sectionName(item.pool)}, not ${sectionName(pool)}; moved it.`);
-      sectionOf[item.pool].push({ ref: item.ref, gist: trimmed(s.gist, LIMITS.gist, item.ref, "gist") });
+      sectionOf[item.pool].push({ ref: item.ref, gist: trimmed(s.gist, limits.gist, item.ref, "gist") });
     }
   }
   const refList = (list: string[]) => [...new Set(list.map(resolve).filter((i): i is RunItem => Boolean(i)).map((i) => i.ref))];
@@ -205,7 +206,7 @@ function sectionName(p: Pool): string {
   return p === "following" ? "following" : p === "top" ? "top_picks" : "for_you";
 }
 
-export async function digestFinish(dir: string, input: FinishInput, opts: { keep: number; now?: () => Date }): Promise<string> {
+export async function digestFinish(dir: string, input: FinishInput, opts: { keep: number; now?: () => Date; limits?: DigestLimits }): Promise<string> {
   const now = opts.now ?? (() => new Date());
   const run = input.run_id ? await runStore(dir).read(input.run_id.trim()) : await latestRun(dir);
   if (!run) {
@@ -228,7 +229,7 @@ export async function digestFinish(dir: string, input: FinishInput, opts: { keep
     ].join("\n");
   }
 
-  const { judgments, warnings } = resolveJudgments(run, input);
+  const { judgments, warnings } = resolveJudgments(run, input, opts.limits);
   const sections = checkEmptySections(run, judgments, input.empty_sections);
   if (sections.error) throw new DigestInputError(sections.error);
   warnings.push(...sections.warnings);

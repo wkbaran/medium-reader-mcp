@@ -210,6 +210,7 @@ Everything about it is in **[docs/classifier.md](docs/classifier.md)**: settings
 | `MEDIUM_READER_DIGEST_RANK_FLOOR` | Rank below which posts are collapsed to one line (default off) |
 | `MEDIUM_READER_DIGEST_RANK_FLOOR_MODE` | `exclude`: leave posts below the floor out entirely and only count them (default `compact`) |
 | `MEDIUM_READER_DIGEST_FETCH_BUDGET` | How long `digest_begin` may spend, rating included (default `170s`, which fits a 300 s agent tool timeout). Raise it where the client waits longer, e.g. `10min` |
+| `MEDIUM_READER_DIGEST_GIST_MAX`, `_STAR_GIST_MAX`, `_WHY_MAX`, `_MAX_STARRED` | Longest one-line gist, ⭐ gist and why line in characters, and the most ⭐ picks (default `280`, `400`, `250`, `8`). Longer text is cut at a clause or word break, with a warning. The values are written into `digest_finish`'s argument descriptions and returned by `digest_begin` (`limits`), so the model or job is told the same numbers |
 | `MEDIUM_READER_RATE`, `MEDIUM_READER_CONCURRENCY`, `MEDIUM_READER_MIN_GAP` | Pacing of requests to Medium, e.g. `60/min`, `2`, `250ms` (default: none). See [paced-fetch](https://github.com/wkbaran/paced-fetch) |
 | `MEDIUM_READER_RETRIES`, `MEDIUM_READER_MAX_RETRY_WAIT` | Retries after a 429 (or a 5xx or network error on a query; mutations aren't sent twice), waiting 0.5 s then 1 s or Medium's `Retry-After`; and the longest `Retry-After` worth waiting (default `2`, `60s`; longer fails at once) |
 

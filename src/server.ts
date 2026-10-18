@@ -14,7 +14,7 @@ import { parseSince } from "./tool-util.js";
 
 export { parseSince };
 
-const VERSION = "0.7.0";
+const VERSION = "0.8.0";
 
 /**
  * Hands out a client for the current credentials. Credentials are re-read on

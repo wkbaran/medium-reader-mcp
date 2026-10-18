@@ -84,6 +84,32 @@ export function digestFetchBudget(env: NodeJS.ProcessEnv = process.env): { ms: n
   return { ms: 170_000, warning: `MEDIUM_READER_DIGEST_FETCH_BUDGET=${raw} isn't a duration of at least 30 s; using 170 s.` };
 }
 
+/** Lengths and counts digest_finish allows; longer text is cut at a clause or word break, with a warning. */
+export interface DigestLimits {
+  /** ⭐ picks at most; extras move to their section. */
+  starred: number;
+  /** Characters in a ⭐ pick's gist. */
+  starGist: number;
+  /** Characters in a ⭐ pick's why line. */
+  why: number;
+  /** Characters in a section post's one-line gist. */
+  gist: number;
+}
+
+/**
+ * MEDIUM_READER_DIGEST_MAX_STARRED (8), _STAR_GIST_MAX (400), _WHY_MAX (250) and
+ * _GIST_MAX (280). The values are also written into digest_finish's argument
+ * descriptions and returned by digest_begin, so a client's prompt can use them.
+ */
+export function digestLimits(): DigestLimits {
+  return {
+    starred: Math.round(envNumber("MEDIUM_READER_DIGEST_MAX_STARRED", 8, 1, 30)),
+    starGist: Math.round(envNumber("MEDIUM_READER_DIGEST_STAR_GIST_MAX", 400, 80, 2000)),
+    why: Math.round(envNumber("MEDIUM_READER_DIGEST_WHY_MAX", 250, 40, 1000)),
+    gist: Math.round(envNumber("MEDIUM_READER_DIGEST_GIST_MAX", 280, 60, 1000)),
+  };
+}
+
 export function digestKeep(): number {
   return Math.round(envNumber("MEDIUM_READER_DIGEST_KEEP", 3000, 100, 100_000));
 }

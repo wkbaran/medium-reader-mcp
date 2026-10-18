@@ -356,6 +356,32 @@ describe("digest tools", () => {
     expect(view).toContain("MEDIUM_READER_CLASSIFIER=jev but neither MEDIUM_READER_JEV_API_KEY nor OPENROUTER_API_KEY is set; used sampling.");
   });
 
+  it("takes its length limits from env, states them in digest_finish's description, returns them, and cuts to them", async () => {
+    process.env.MEDIUM_READER_DIGEST_WHY_MAX = "60";
+    process.env.MEDIUM_READER_DIGEST_GIST_MAX = "80";
+    process.env.MEDIUM_READER_DIGEST_MAX_STARRED = "2";
+    await writeFile(join(dir, "state.json"), JSON.stringify({ last_run: "2026-09-29T12:00:00Z", reported_posts: [] }, null, 2) + "\n");
+    const following = [recent(hex("f", 1), { title: "One" }), recent(hex("f", 2), { title: "Two" }), recent(hex("f", 3), { title: "Three" })];
+    const { client } = await connect({ FollowingFeed: followingList(following), RecommendedFeed: forYouList([]), ReadingHistory: history([]) });
+    const finishTool = (await client.listTools()).tools.find((t) => t.name === "digest_finish")!;
+    const described = JSON.stringify(finishTool.inputSchema);
+    expect(described).toContain("≤60 characters");
+    expect(described).toContain("≤80 characters");
+    expect(described).toContain("at most 2.");
+    const begin = await client.callTool({ name: "digest_begin", arguments: {} });
+    expect((begin.structuredContent as { limits: unknown }).limits).toEqual({ starred: 2, star_gist: 400, why: 60, gist: 80 });
+    const long = "word ".repeat(40).trim();
+    const out = textOf(
+      await client.callTool({
+        name: "digest_finish",
+        arguments: { starred: [{ ref: "F1", gist: "g", why: long }, { ref: "F2", gist: "g", why: "w" }, { ref: "F3", gist: long, why: "w" }], dry_run: true },
+      }),
+    );
+    expect(out).toContain("F1 why cut to 60 characters.");
+    expect(out).toContain("More than 2 starred; F3 moved to its section.");
+    expect(out).toContain("F3 gist cut to 80 characters.");
+  });
+
   it("continues an open run instead of starting another, until it is stale, finished or given a since", async () => {
     await writeFile(join(dir, "state.json"), JSON.stringify({ last_run: "2026-09-29T12:00:00Z", reported_posts: [] }, null, 2) + "\n");
     const following = [recent(hex("f", 1), { title: "Postgres vacuum, explained" }), recent(hex("f", 2))];

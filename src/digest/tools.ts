@@ -7,7 +7,7 @@ import { classifierFromEnv } from "../classifier/index.js";
 import { proposalSummary, tidyProposal } from "../classifier/proposal.js";
 import { samplingFn } from "../classifier/mcp.js";
 import { SamplingRater } from "../classifier/sampling.js";
-import { digestFetchBudget, digestKeep, digestRankFloor, digestRankFloorMode, digestSkipThreshold, digestStyle, digestTimezone } from "../config.js";
+import { digestFetchBudget, digestKeep, digestLimits, type DigestLimits, digestRankFloor, digestRankFloorMode, digestSkipThreshold, digestStyle, digestTimezone } from "../config.js";
 import type { ClientProvider } from "../server.js";
 import { errorText, run, text } from "../tool-util.js";
 import { BEGIN_DEFAULTS, digestBegin } from "./collect.js";
@@ -33,10 +33,11 @@ const refList = (what: string) =>
     .default([])
     .describe(`${what} Refs as listed by digest_begin (F3, T1, Y12), post ids or URLs.`);
 
-const pick = z.object({
-  ref: z.string().describe("Ref from digest_begin (F3, T1, Y12), post id or URL."),
-  gist: z.string().default("").describe("One line: the post's actual point (≤280 characters)."),
-});
+const pickFor = (limits: DigestLimits) =>
+  z.object({
+    ref: z.string().describe("Ref from digest_begin (F3, T1, Y12), post id or URL."),
+    gist: z.string().default("").describe(`One line: the post's actual point (≤${limits.gist} characters).`),
+  });
 
 const localOnly = { readOnlyHint: false, destructiveHint: false, openWorldHint: false } as const;
 
@@ -115,9 +116,15 @@ const workListShape = {
   interests: z.string(),
   skip: z.string(),
   warnings: z.array(z.string()),
+  limits: z
+    .object({ starred: z.number(), star_gist: z.number(), why: z.number(), gist: z.number() })
+    .describe("What digest_finish accepts: at most `starred` ⭐ picks, and these lengths in characters (longer text is cut, with a warning)."),
 };
 
 export function registerDigestTools(server: McpServer, provider: ClientProvider, dir: string): void {
+  // Read once, so the descriptions, digest_begin's data and digest_finish's cuts agree.
+  const limits = digestLimits();
+  const pick = pickFor(limits);
   server.registerTool(
     "digest_begin",
     {
@@ -156,7 +163,7 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
           threshold: digestSkipThreshold(),
           budgetMs: budget.ms,
         });
-        return { content: [{ type: "text", text: view }], structuredContent: { ...work } };
+        return { content: [{ type: "text", text: view }], structuredContent: { ...work, limits: { starred: limits.starred, star_gist: limits.starGist, why: limits.why, gist: limits.gist } } };
       }),
   );
 
@@ -174,14 +181,14 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
             .array(
               z.object({
                 ref: z.string(),
-                gist: z.string().default("").describe("1–2 sentences: the argument or findings (≤400 characters)."),
-                why: z.string().default("").describe("Why it's worth reading in full (≤250 characters)."),
+                gist: z.string().default("").describe(`1–2 sentences: the argument or findings (≤${limits.starGist} characters).`),
+                why: z.string().default("").describe(`Why it's worth reading in full (≤${limits.why} characters).`),
               }),
             )
-            .max(20),
+            .max(Math.max(20, limits.starred * 2)),
         )
           .default([])
-          .describe("⭐ Read in full: usually 3–6, at most 8. Not repeated in their sections."),
+          .describe(`⭐ Read in full: usually 3–6, at most ${limits.starred}. Not repeated in their sections.`),
         following: lenient(z.array(pick)).default([]).describe("Other Following posts that were read (F refs)."),
         top_picks: lenient(z.array(pick)).default([]).describe("Other top picks that were read (T refs)."),
         for_you: lenient(z.array(pick)).default([]).describe("Other For you posts that were read (Y refs)."),
@@ -198,7 +205,7 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
       },
       annotations: { ...localOnly, idempotentHint: true },
     },
-    (args) => run(async () => text(await digestFinish(dir, args, { keep: digestKeep() }))),
+    (args) => run(async () => text(await digestFinish(dir, args, { keep: digestKeep(), limits }))),
   );
 
   server.registerTool(
