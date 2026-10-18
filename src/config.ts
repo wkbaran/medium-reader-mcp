@@ -32,7 +32,7 @@ export const GRAPHQL_URL = "https://medium.com/_/graphql";
 export const USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
-// ---- digest mode (opt-in; see README "Daily digest with Hermes Agent") ----
+// ---- digest mode (opt-in; see README "Daily digest") ----
 
 /** Directory holding the digest's state.json, interests.md and runs/. Unset hides the digest tools. */
 export function digestDir(): string | undefined {

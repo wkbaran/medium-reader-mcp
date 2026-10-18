@@ -8,8 +8,8 @@
 //   node bench.mjs embed    --model nomic-embed-text:v1.5 [--base …] [--prefix "classification: "] [--profile v2]
 //                           embedding similarity: closest Interest bullet minus closest Skip bullet
 //
-// Ollama on dtop.home isn't reachable from WSL; tunnel through the Hermes host:
-//   ssh -f -N -L 11435:dtop.home:11434 core@192.168.50.207
+// Ollama on the Windows side isn't reachable from WSL; tunnel through a LAN host that can reach it:
+//   ssh -f -N -L 11435:<ollama-host>:11434 <user>@<lan-host>
 // Add a backend by writing a function that returns { ratings: { [id]: { score, want?, skip? } }, notes } (higher score = more wanted).
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { SamplingRater, skipCondition } from "../../dist/classifier/sampling.js";

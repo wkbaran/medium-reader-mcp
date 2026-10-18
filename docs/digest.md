@@ -31,9 +31,9 @@ An unattended, scheduled digest is a different job from a person chatting: nobod
   - `## Interests`: what you want more of. The classifier ranks against it, and the agent sees it.
   - `## Skip`: kinds of post to drop, judged by intent rather than wording. There's no built-in skip list.
   - Check that it says what you mean with the [tuning tools](classifier.md#tuning-it-to-you), or [draft one from your activity](classifier.md#proposing-an-interestsmd-from-your-activity).
-- **Shortlist sizes** (10/5/10, chunks of 5 per subagent) are plain instructions in `hermes/SKILL.md`. How much is fetched is set by `digest_begin`'s arguments.
+- **Shortlist sizes** (10/5/10, chunks of 5 per subagent) are plain instructions in the Hermes skill, `hermes/SKILL.md`; a job runner such as medium-digest sets its own. How much is fetched is set by `digest_begin`'s arguments.
 - **Output:** `MEDIUM_READER_DIGEST_STYLE=markdown` drops Discord's `<…>` around links. The layout is in `src/digest/render.ts`.
-- **Schedule and delivery:** `hermes cron edit <job-id> --schedule "…"` or `--deliver …`.
+- **Schedule and delivery** are the runner's. With Hermes: `hermes cron edit <job-id> --schedule "…"` or `--deliver …`.
 
 ## Things to know
 

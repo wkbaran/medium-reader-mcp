@@ -11,7 +11,7 @@
 ![Jev](https://img.shields.io/badge/ranking-Jev%20decision%20model-orange)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
-[Quick start](#quick-start) · [Tools](#tools) · [Daily digest](#daily-digest-with-hermes-agent) · [Headline ranking with Jev](#headline-ranking-with-jev) · [Logging in](#logging-in) · [Troubleshooting](#troubleshooting)
+[Quick start](#quick-start) · [Tools](#tools) · [Daily digest](#daily-digest) · [Headline ranking with Jev](#headline-ranking-with-jev) · [Logging in](#logging-in) · [Troubleshooting](#troubleshooting)
 
 </div>
 
@@ -19,7 +19,7 @@ An MCP server for your own Medium account:
 
 - **Read:** your Following and For you feeds, full member-only posts, search, reading lists, follows and history.
 - **Act, when you ask:** follow and unfollow, mute, save to lists, clap.
-- **Daily digest:** with [Hermes Agent](https://github.com/NousResearch/hermes-agent), a scheduled morning digest. [Jev](#headline-ranking-with-jev) can rank every headline against your interests before an LLM reads anything.
+- **Daily digest:** a scheduled morning digest, run by a standalone job such as [medium-digest](https://github.com/wkbaran/medium-digest) or by an agent such as [Hermes Agent](https://github.com/NousResearch/hermes-agent). [Jev](#headline-ranking-with-jev) can rank every headline against your interests before an LLM reads anything.
 - **No API keys for Medium:** you log in once in a browser window.
 
 ## What it uses
@@ -114,16 +114,21 @@ Follows and claps are visible to the author, and named lists are public.
 
 A worked example of a whole run, with each tool's arguments and output: [docs/digest-tools.md](docs/digest-tools.md).
 
-## Daily digest with Hermes Agent
+## Daily digest
 
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) runs skills on a schedule and delivers to Discord and other chats. [`hermes/SKILL.md`](hermes/SKILL.md) turns this server into a morning digest:
+The digest tools turn this server into a morning digest. Two ways to run it:
+
+- **[medium-digest](https://github.com/wkbaran/medium-digest)**, a plain scheduled job (Docker and supercronic) that drives this server over MCP, asks an OpenAI-compatible gateway narrow questions and posts to a Discord webhook. This is how I run it.
+- **[Hermes Agent](https://github.com/NousResearch/hermes-agent)**, which runs skills on a schedule and delivers to Discord and other chats, with the skill in [`hermes/SKILL.md`](hermes/SKILL.md). The setup is below.
+
+Either way:
 
 - **What it covers:** new posts from Following, Medium's top picks, and your personal "For you" positions 25–100.
-- **How it's chosen:** Jev ranks and filters the headlines, then subagents read the best 20–25 in full.
+- **How it's chosen:** Jev ranks and filters the headlines, then the best 20–25 are read in full (by subagents, under Hermes).
 - **What you get:** one message, with ⭐ "Read in full" picks that each have a summary and a reason.
-- **What the model does:** only the judging. Fetching, state and layout are code, which took a Sonnet run from about $2.50 to $0.40. State files, locks and run files use [job-ledger](https://www.npmjs.com/package/job-ledger).
+- **What the model does:** only the judging. Fetching, state and layout are code, which took a Sonnet run on Hermes from about $2.50 to $0.40. State files, locks and run files use [job-ledger](https://www.npmjs.com/package/job-ledger).
 
-**Setup**
+### Setup with Hermes Agent
 
 1. **Build** (`npm ci && npm run build`) and copy `dist/`, `package.json` and `package-lock.json` to where Hermes can see them, e.g. `/opt/data/mcp/medium-reader-mcp`. Then run `npm ci --omit=dev --omit=optional` there.
 2. **Log in** on a machine with a browser (`medium-reader-mcp login`), then copy `~/.config/medium-reader/auth.json` to the Hermes host, e.g. `/opt/data/mcp/medium-reader-home/`.

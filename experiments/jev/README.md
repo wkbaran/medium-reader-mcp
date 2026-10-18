@@ -112,7 +112,7 @@ The profiles live in `data/interests.<v>.md`; pick one with `PROFILE=v2` for `ru
 
 To add a Jev alternative, write one function returning `{ ratings: { id: { score } } }`.
 
-Ollama on `dtop.home` (the Windows side) isn't reachable from WSL. Tunnel through the Hermes host with `ssh -f -N -L 11435:dtop.home:11434 core@192.168.50.207`; `--base` defaults to `http://localhost:11435/v1`.
+Ollama on the Windows side isn't reachable from WSL. Tunnel through a LAN host that can reach it with `ssh -f -N -L 11435:<ollama-host>:11434 <user>@<lan-host>`; `--base` defaults to `http://localhost:11435/v1`.
 
 **Results, profile v2:**
 
