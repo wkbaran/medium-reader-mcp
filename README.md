@@ -4,7 +4,7 @@
 
 **Ask Claude what's new in your Medium feed, and have it read member-only stories for you.**
 
-![Node 20+](https://img.shields.io/badge/node-20%2B-339933?logo=nodedotjs&logoColor=white)
+![npm](https://img.shields.io/npm/v/medium-reader-mcp) ![Node 26+](https://img.shields.io/badge/node-26%2B-339933?logo=nodedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![MCP](https://img.shields.io/badge/MCP-stdio-6E56CF)
 ![Tools](https://img.shields.io/badge/tools-19%20%2B%205%20digest-informational)
@@ -27,7 +27,7 @@ An MCP server for your own Medium account:
 | What | Needed? |
 |---|---|
 | Your [Medium](https://medium.com) account | Yes. A [membership](https://medium.com/membership) is needed to read member-only stories in full |
-| Node.js 20+ | Yes |
+| Node.js 26+ | Yes |
 | Chrome or Edge | Only for the browser login (you can paste cookies instead) |
 | A [Jev](docs/jev/README.md)-style decision model | Optional. Ranks digest headlines against your interests in about 2 s per 100. Any provider with the same decisions API works, set by URL, key and model like an OpenAI-compatible client. The default is TypeSafe's Jev on [OpenRouter](https://openrouter.ai/typesafe/jev-1.13), about $0.03 per 1,000 headlines |
 | An MCP client | Claude Code, Claude Desktop, Cursor, VS Code, Hermes Agent… |
@@ -40,13 +40,13 @@ How it talks to Medium:
 ## Quick start
 
 ```bash
-git clone https://github.com/wkbaran/medium-reader-mcp.git
-cd medium-reader-mcp
-npm install && npm run build
+npm install -g medium-reader-mcp
 
-node dist/cli.js login     # a browser window opens; sign in to Medium as usual
-node dist/cli.js install   # registers the server with Claude Code
+medium-reader-mcp login     # a browser window opens; sign in to Medium as usual
+medium-reader-mcp install   # registers the server with Claude Code
 ```
+
+From source instead: `git clone https://github.com/wkbaran/medium-reader-mcp.git`, then `npm install && npm run build`, and use `node dist/cli.js` in place of `medium-reader-mcp`.
 
 Restart Claude Code, then try:
 
@@ -59,16 +59,16 @@ Restart Claude Code, then try:
 <details>
 <summary><b>Other MCP clients</b> (Claude Desktop, Cursor, VS Code)</summary>
 
-Point the client at `dist/cli.js` with an absolute path, after running `login`:
+Point the client at the `medium-reader-mcp` command (or `node` with the absolute path of `dist/cli.js` for a source checkout), after running `login`:
 
 ```json
-{ "mcpServers": { "medium-reader": { "command": "node", "args": ["/absolute/path/to/medium-reader-mcp/dist/cli.js"] } } }
+{ "mcpServers": { "medium-reader": { "command": "medium-reader-mcp" } } }
 ```
 
 - **Claude Desktop:** `claude_desktop_config.json` (Settings → Developer → Edit Config)
 - **Cursor:** `~/.cursor/mcp.json`
 - **VS Code:** `.vscode/mcp.json`, using `"servers"` instead of `"mcpServers"` and adding `"type": "stdio"`
-- **Claude Code, manually:** `claude mcp add --scope user medium-reader -- node /absolute/path/to/dist/cli.js`
+- **Claude Code, manually:** `claude mcp add --scope user medium-reader -- medium-reader-mcp`
 </details>
 
 ## Tools
@@ -126,7 +126,7 @@ A worked example of a whole run, with each tool's arguments and output: [docs/di
 **Setup**
 
 1. **Build** (`npm ci && npm run build`) and copy `dist/`, `package.json` and `package-lock.json` to where Hermes can see them, e.g. `/opt/data/mcp/medium-reader-mcp`. Then run `npm ci --omit=dev --omit=optional` there.
-2. **Log in** on a machine with a browser (`node dist/cli.js login`), then copy `~/.config/medium-reader/auth.json` to the Hermes host, e.g. `/opt/data/mcp/medium-reader-home/`.
+2. **Log in** on a machine with a browser (`medium-reader-mcp login`), then copy `~/.config/medium-reader/auth.json` to the Hermes host, e.g. `/opt/data/mcp/medium-reader-home/`.
 3. **Create the digest directory**, e.g. `/opt/data/sandbox/medium_digest`, with an `interests.md` (start from `hermes/interests.example.md`, or [draft one from your activity](docs/classifier.md#proposing-an-interestsmd-from-your-activity)).
 4. **Register the server** in Hermes's `config.yaml`:
    ```yaml
@@ -185,10 +185,10 @@ Everything about it is in **[docs/classifier.md](docs/classifier.md)**: settings
 
 | Command | What it does |
 |---|---|
-| `node dist/cli.js login` | Log in (`--paste` / `--stdin` to paste cookies) |
-| `node dist/cli.js status` | The logged-in account, membership, and whether the session works |
-| `node dist/cli.js logout` | Delete the session (`--all` also deletes the login browser profile) |
-| `node dist/cli.js install` | Register with Claude Code (`--scope user\|project\|local`) |
+| `medium-reader-mcp login` | Log in (`--paste` / `--stdin` to paste cookies) |
+| `medium-reader-mcp status` | The logged-in account, membership, and whether the session works |
+| `medium-reader-mcp logout` | Delete the session (`--all` also deletes the login browser profile) |
+| `medium-reader-mcp install` | Register with Claude Code (`--scope user\|project\|local`) |
 
 <details>
 <summary><b>Environment variables</b></summary>
@@ -232,7 +232,7 @@ The digest's design rests on a few findings, written up in **[docs/feeds.md](doc
 
 | Symptom | Fix |
 |---|---|
-| *"Not logged in"* / *"session was rejected"* | `node dist/cli.js login` |
+| *"Not logged in"* / *"session was rejected"* | `medium-reader-mcp login` |
 | *"Only a preview was returned"* | Not a member, or the session expired; `status` shows which |
 | *"Cloudflare protection blocked the request"* | Usually temporary. If it persists, Medium changed its bot rules; please open an issue |
 | The server doesn't appear in `/mcp` | Restart Claude Code |
