@@ -107,7 +107,7 @@ Follows and claps are visible to the author, and named lists are public.
 
 | Tool | What it does |
 |---|---|
-| `digest_begin` | Collects what's new, ranks and filters it, and returns a work list with refs (`F3`, `T1`, `Y12`) |
+| `digest_begin` | Collects what's new, ranks and filters it, and returns a work list with refs (`F3`, `T1`, `Y12`). The same list is also in `structuredContent`, for clients that run the digest from code |
 | `digest_finish` | Takes the picks by ref, renders the message and saves state. Safe to repeat |
 | `digest_status` · `mark_reported` | Inspect the state · repair it |
 | `save_interests_proposal` | Saves a drafted `interests.md` as `interests.proposed.md`, never over the real one |

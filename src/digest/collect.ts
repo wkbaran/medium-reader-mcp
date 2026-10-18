@@ -59,7 +59,94 @@ async function openRun(dir: string, now: Date): Promise<RunFile | null> {
   return Number.isNaN(started) || now.getTime() - started >= RESUME_MINUTES * 60_000 ? null : run;
 }
 
-export async function digestBegin(opts: BeginOptions, deps: BeginDeps): Promise<{ run: RunFile; view: string }> {
+/**
+ * The work list as data, for clients that drive the digest from code instead of
+ * a model reading the text view. Same refs; every post the run holds, with its status.
+ */
+export interface WorkList {
+  run_id: string;
+  since: string;
+  member: boolean;
+  /** true when digest_begin continued an open run instead of fetching. */
+  resumed: boolean;
+  /** The classifier line from the text view, e.g. "Classifier jev (…): 40 ranked · 3 skipped (threshold 70%)". */
+  classifier: string;
+  /** The classifier's status: ok, partial, unavailable or off. */
+  classifier_status: RunFile["rater"]["status"];
+  /**
+   * listed: in the text view, can be shortlisted. low: below the rank floor, still a valid ref.
+   * excluded: below the floor in exclude mode, not shown. omitted: cut from the text view for size, still a valid ref.
+   * skipped: dropped by the classifier. Ranked runs list each pool best first.
+   */
+  items: Array<{
+    ref: string;
+    pool: RunItem["pool"];
+    status: "listed" | "low" | "excluded" | "omitted" | "skipped";
+    title: string;
+    subtitle?: string;
+    author?: string;
+    publication?: string;
+    url?: string;
+    minutes?: number;
+    claps?: number;
+    member_only: boolean;
+    /** The user has read this author or publication recently. */
+    read: boolean;
+    /** Why Medium showed it (For you). */
+    reason?: string;
+    /** 0–100, when the classifier ranked it. */
+    rank?: number;
+  }>;
+  /** Authors and publications from the reading history, with counts. */
+  history: RunFile["history"];
+  /** interests.md's sections; "" when absent. */
+  interests: string;
+  skip: string;
+  warnings: string[];
+}
+
+export function workList(run: RunFile, interests: Interests | null, resumed: boolean): WorkList {
+  const ranked = Boolean(run.rater.ranked);
+  const exclude = run.rater.floor_mode === "exclude";
+  const status = (i: RunItem): WorkList["items"][number]["status"] =>
+    i.skipped ? "skipped" : i.low ? (exclude ? "excluded" : "low") : i.omitted ? "omitted" : "listed";
+  const order = { listed: 0, omitted: 1, low: 2, excluded: 3, skipped: 4 };
+  const pools = { following: 0, top: 1, for_you: 2 };
+  const items = run.items
+    .map((i, n) => ({ i, n }))
+    .sort((a, b) => pools[a.i.pool] - pools[b.i.pool] || order[status(a.i)] - order[status(b.i)] || (ranked ? (b.i.rank ?? 0.5) - (a.i.rank ?? 0.5) : 0) || a.n - b.n)
+    .map(({ i }) => ({
+      ref: i.ref,
+      pool: i.pool,
+      status: status(i),
+      title: i.title,
+      ...(i.subtitle ? { subtitle: i.subtitle } : {}),
+      ...(i.author ? { author: i.author } : {}),
+      ...(i.publication ? { publication: i.publication } : {}),
+      ...(i.url ? { url: i.url } : {}),
+      ...(i.minutes !== undefined ? { minutes: i.minutes } : {}),
+      ...(i.claps !== undefined ? { claps: i.claps } : {}),
+      member_only: i.memberOnly,
+      read: i.read,
+      ...(i.reason ? { reason: i.reason } : {}),
+      ...(i.rank !== undefined ? { rank: Math.round(i.rank * 100) } : {}),
+    }));
+  return {
+    run_id: run.run_id,
+    since: run.since,
+    member: run.member,
+    resumed,
+    classifier: raterLine(run.rater),
+    classifier_status: run.rater.status,
+    items,
+    history: run.history,
+    interests: interests?.interests ?? "",
+    skip: interests?.skip ?? "",
+    warnings: run.warnings,
+  };
+}
+
+export async function digestBegin(opts: BeginOptions, deps: BeginDeps): Promise<{ run: RunFile; view: string; work: WorkList }> {
   const now = deps.now ?? (() => new Date());
 
   // A second begin while a run is open continues that run. read_post resolves refs against the
@@ -71,8 +158,9 @@ export async function digestBegin(opts: BeginOptions, deps: BeginDeps): Promise<
       `Continuing the open digest run ${open.run_id} (started ${open.started_at}; nothing new was fetched). ` +
       `If you were asked to read posts for someone else, call only read_post and reply with what you were asked for; ` +
       `only the model writing the digest calls digest_begin or digest_finish.\n\n`;
-    const view = renderView(open, await loadInterests(deps.dir), opts.max_chars).replace(/\nNext: [^\n]*$/, "");
-    return { run: open, view: header + view };
+    const openInterests = await loadInterests(deps.dir);
+    const view = renderView(open, openInterests, opts.max_chars).replace(/\nNext: [^\n]*$/, "");
+    return { run: open, view: header + view, work: workList(open, openInterests, true) };
   }
 
   const user = await deps.client.whoami(); // an expired session fails here, before anything else
@@ -203,7 +291,7 @@ export async function digestBegin(opts: BeginOptions, deps: BeginDeps): Promise<
   const view = renderView(run, interests, opts.max_chars);
   await runs.write(runId, run);
   await runs.prune();
-  return { run, view };
+  return { run, view, work: workList(run, interests, false) };
 }
 
 async function collectFollowing(client: MediumClient, since: Date, max: number): Promise<PostSummary[]> {

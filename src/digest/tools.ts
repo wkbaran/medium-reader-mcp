@@ -83,6 +83,40 @@ export function registerRateHeadings(server: McpServer): void {
   );
 }
 
+/** digest_begin's structuredContent: the same work list as its text, for clients that run the digest from code. */
+const workListShape = {
+  run_id: z.string(),
+  since: z.string(),
+  member: z.boolean(),
+  resumed: z.boolean().describe("true when an open run was continued and nothing was fetched."),
+  classifier: z.string(),
+  classifier_status: z.enum(["ok", "partial", "unavailable", "off"]),
+  items: z
+    .array(
+      z.object({
+        ref: z.string(),
+        pool: z.enum(["following", "top", "for_you"]),
+        status: z.enum(["listed", "low", "excluded", "omitted", "skipped"]).describe("listed, low and omitted are valid refs to read; excluded and skipped are not shown in the digest."),
+        title: z.string(),
+        subtitle: z.string().optional(),
+        author: z.string().optional(),
+        publication: z.string().optional(),
+        url: z.string().optional(),
+        minutes: z.number().optional(),
+        claps: z.number().optional(),
+        member_only: z.boolean(),
+        read: z.boolean().describe("The user has read this author or publication recently."),
+        reason: z.string().optional().describe("Why Medium showed it (For you)."),
+        rank: z.number().optional().describe("0–100, when the classifier ranked it."),
+      }),
+    )
+    .describe("By pool (following, top, for_you), then status, best-ranked first when ranked."),
+  history: z.object({ authors: z.array(z.tuple([z.string(), z.number()])), publications: z.array(z.tuple([z.string(), z.number()])) }),
+  interests: z.string(),
+  skip: z.string(),
+  warnings: z.array(z.string()),
+};
+
 export function registerDigestTools(server: McpServer, provider: ClientProvider, dir: string): void {
   server.registerTool(
     "digest_begin",
@@ -101,6 +135,7 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
         history: z.number().int().min(0).max(90).default(BEGIN_DEFAULTS.history),
         max_chars: z.number().int().min(10_000).max(45_000).default(BEGIN_DEFAULTS.max_chars),
       },
+      outputSchema: workListShape,
       annotations: { ...localOnly, idempotentHint: false, openWorldHint: true },
     },
     (args) =>
@@ -110,7 +145,7 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
         const tz = digestTimezone();
         const budget = digestFetchBudget();
         const notes = [tz.warning, warning, budget.warning].filter(Boolean).join(" ");
-        const { view } = await digestBegin(args, {
+        const { view, work } = await digestBegin(args, {
           client,
           dir,
           classifier,
@@ -121,7 +156,7 @@ export function registerDigestTools(server: McpServer, provider: ClientProvider,
           threshold: digestSkipThreshold(),
           budgetMs: budget.ms,
         });
-        return text(view);
+        return { content: [{ type: "text", text: view }], structuredContent: { ...work } };
       }),
   );
 

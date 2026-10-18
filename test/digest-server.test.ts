@@ -133,6 +133,15 @@ describe("digest tools", () => {
     expect(view).toMatch(/\nT1 \| Post b00000000000 \| .* \| follow:Coding\n/);
     expect(view).toContain("## For you\nY1 | Post b00000000019");
     expect(prompts.join("\n")).toContain("Anything about earning money");
+    // The same work list as data, for code-driven clients.
+    const work = begin.structuredContent as { run_id: string; resumed: boolean; classifier: string; items: { ref: string; pool: string; status: string; read: boolean; reason?: string }[]; interests: string };
+    expect(view).toContain(`Medium digest run ${work.run_id}`);
+    expect(work.resumed).toBe(false);
+    expect(work.classifier).toBe("Classifier sampling: 1 skipped (threshold 70%)");
+    expect(work.items.find((i) => i.ref === "F1")).toMatchObject({ pool: "following", status: "listed", read: true });
+    expect(work.items.find((i) => i.ref === "F2")).toMatchObject({ status: "skipped" });
+    expect(work.items.find((i) => i.ref === "T1")).toMatchObject({ pool: "top", reason: "Because you follow Coding" });
+    expect(work.interests).toContain("Databases");
     // For you was read by position and never past 100 (enough posts, so no extension).
     const offsets = requests.filter((r) => r.operationName === "RecommendedFeed").map((r) => Number((r.variables.paging as { to?: string }).to ?? 0));
     expect(Math.max(...offsets)).toBe(75);
@@ -361,7 +370,9 @@ describe("digest tools", () => {
     expect(first).toContain("Next: shortlist");
 
     // a second begin (a retry, or a subagent) gets the same run, fetches nothing and is not told to finish
-    const second = textOf(await begin());
+    const secondResult = await begin();
+    const second = textOf(secondResult);
+    expect(secondResult.structuredContent).toMatchObject({ run_id: runId, resumed: true });
     expect(requests.length).toBe(fetched);
     expect(await runs()).toEqual([`${runId}.json`]);
     expect(second).toContain(`Continuing the open digest run ${runId}`);
