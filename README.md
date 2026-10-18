@@ -121,7 +121,7 @@ A worked example of a whole run, with each tool's arguments and output: [docs/di
 - **What it covers:** new posts from Following, Medium's top picks, and your personal "For you" positions 25–100.
 - **How it's chosen:** Jev ranks and filters the headlines, then subagents read the best 20–25 in full.
 - **What you get:** one message, with ⭐ "Read in full" picks that each have a summary and a reason.
-- **What the model does:** only the judging. Fetching, state and layout are code, which took a Sonnet run from about $2.50 to $0.40.
+- **What the model does:** only the judging. Fetching, state and layout are code, which took a Sonnet run from about $2.50 to $0.40. State files, locks and run files use [job-ledger](https://www.npmjs.com/package/job-ledger).
 
 **Setup**
 

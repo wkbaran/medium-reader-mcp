@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
+import { insideDir } from "job-ledger";
 import { DIGEST_FILES } from "../config.js";
 import { parseProfile, type ReaderProfile } from "../classifier/types.js";
-import { insideDir } from "./state.js";
 
 /** interests.md: the "## Interests" and "## Skip" section bodies, trimmed. */
 export type Interests = ReaderProfile;

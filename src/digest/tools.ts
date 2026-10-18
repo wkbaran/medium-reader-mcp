@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { insideDir, writeAtomic } from "job-ledger";
 import { renderEvidence } from "../classifier/evidence.js";
 import { classifierFromEnv } from "../classifier/index.js";
 import { proposalSummary, tidyProposal } from "../classifier/proposal.js";
@@ -12,7 +13,6 @@ import { errorText, run, text } from "../tool-util.js";
 import { BEGIN_DEFAULTS, digestBegin } from "./collect.js";
 import { gatherEvidence } from "./evidence.js";
 import { digestFinish, digestStatus, markReported } from "./finish.js";
-import { insideDir, writeAtomic } from "./state.js";
 
 /** Accept a JSON string where an array is expected; weaker models send arrays that way. */
 function lenient<T extends z.ZodType>(schema: T) {

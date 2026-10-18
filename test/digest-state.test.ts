@@ -2,7 +2,9 @@ import { mkdir, mkdtemp, readdir, readFile, stat, symlink, utimes, writeFile } f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { commitState, insideDir, isoSeconds, laterIso, listRunIds, loadState, newRunId, normalizeIds, pruneRuns, withLock, writeRun } from "../src/digest/state.js";
+import { insideDir, isoSeconds, laterIso, withLock } from "job-ledger";
+import { commitState, loadState, normalizeIds, runStore } from "../src/digest/state.js";
+import type { RunFile } from "../src/digest/types.js";
 
 let dir: string;
 const stateFile = () => join(dir, "state.json");
@@ -118,16 +120,18 @@ describe("run files", () => {
   it("names runs by start time, avoids collisions, and keeps the newest 14", async () => {
     const t = new Date("2026-10-02T12:15:31.400Z");
     expect(isoSeconds(t)).toBe("2026-10-02T12:15:31Z");
-    const first = await newRunId(dir, t);
+    const runs = runStore(dir);
+    const empty = {} as RunFile;
+    const first = await runs.newId(t);
     expect(first).toBe("20261002T121531Z");
-    await writeRun(dir, first, {});
-    const second = await newRunId(dir, t);
+    await runs.write(first, empty);
+    const second = await runs.newId(t);
     expect(second).toBe("20261002T121531Z-2");
-    await writeRun(dir, second, {});
-    for (let d = 1; d <= 15; d++) await writeRun(dir, `202609${String(d).padStart(2, "0")}T000000Z`, {});
+    await runs.write(second, empty);
+    for (let d = 1; d <= 15; d++) await runs.write(`202609${String(d).padStart(2, "0")}T000000Z`, empty);
     await mkdir(join(dir, "runs", "ignored"));
-    await pruneRuns(dir);
-    const left = await listRunIds(dir);
+    await runs.prune();
+    const left = await runs.list();
     expect(left).toHaveLength(14);
     expect(left.slice(-2)).toEqual(["20261002T121531Z", "20261002T121531Z-2"]);
     expect(left[0]).toBe("20260904T000000Z");

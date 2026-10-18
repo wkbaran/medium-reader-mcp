@@ -1,9 +1,10 @@
+import { isoSeconds } from "job-ledger";
 import type { MediumClient, PostSummary, RankedPost } from "../medium/api.js";
 import { parseSince } from "../tool-util.js";
 import { classifySafely, type Classifier } from "../classifier/index.js";
 import { loadInterests, type Interests } from "./interests.js";
 import { cut, formatClaps, formatLocal, shortReason } from "./render.js";
-import { isoSeconds, listRunIds, loadState, newRunId, pruneRuns, readRun, writeRun } from "./state.js";
+import { loadState, runStore } from "./state.js";
 import { POOL_PREFIX, type Pool, type RunFile, type RunItem } from "./types.js";
 
 export interface BeginOptions {
@@ -51,8 +52,8 @@ export const RESUME_MINUTES = 90;
 
 /** The latest run, if it isn't committed yet and started under RESUME_MINUTES ago. */
 async function openRun(dir: string, now: Date): Promise<RunFile | null> {
-  const id = (await listRunIds(dir).catch(() => [] as string[])).at(-1);
-  const run = id ? await readRun<RunFile>(dir, id) : null;
+  const id = (await runStore(dir).list().catch(() => [] as string[])).at(-1);
+  const run = id ? await runStore(dir).read(id) : null;
   if (!run || run.committed_at || !Array.isArray(run.items)) return null;
   const started = Date.parse(run.started_at);
   return Number.isNaN(started) || now.getTime() - started >= RESUME_MINUTES * 60_000 ? null : run;
@@ -175,7 +176,8 @@ export async function digestBegin(opts: BeginOptions, deps: BeginDeps): Promise<
       : { ...base, status: result.notes.length ? "partial" : "ok", ...(result.notes.length ? { detail: result.notes.join("; ") } : {}) };
   }
 
-  const runId = await newRunId(deps.dir, startedAt);
+  const runs = runStore(deps.dir);
+  const runId = await runs.newId(startedAt);
   const run: RunFile = {
     version: 1,
     run_id: runId,
@@ -199,8 +201,8 @@ export async function digestBegin(opts: BeginOptions, deps: BeginDeps): Promise<
     items,
   };
   const view = renderView(run, interests, opts.max_chars);
-  await writeRun(deps.dir, runId, run);
-  await pruneRuns(deps.dir);
+  await runs.write(runId, run);
+  await runs.prune();
   return { run, view };
 }
 

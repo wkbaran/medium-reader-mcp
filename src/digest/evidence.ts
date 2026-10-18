@@ -5,10 +5,11 @@
  * Read-only: nothing here changes the account or the digest state.
  */
 import { readFile } from "node:fs/promises";
+import { insideDir } from "job-ledger";
 import { isTrainLabel, labelSections, type Evidence, type EvidenceItem, type EvidenceSection } from "../classifier/evidence.js";
 import type { MediumClient, PostSummary } from "../medium/api.js";
 import { DIGEST_FILES } from "../config.js";
-import { insideDir, listRunIds, readRun } from "./state.js";
+import { runStore } from "./state.js";
 import type { RunFile } from "./types.js";
 
 export interface EvidenceOptions {
@@ -90,8 +91,9 @@ export async function gatherEvidence(client: MediumClient, dir: string | undefin
   if (dir) {
     await attempt("digest picks", async () => {
       const starred: EvidenceItem[] = [];
-      for (const id of await listRunIds(dir)) {
-        const run = await readRun<RunFile>(dir, id);
+      const runs = runStore(dir);
+      for (const id of await runs.list()) {
+        const run = await runs.read(id);
         if (!run?.judgments) continue;
         const byRef = new Map(run.items.map((i) => [i.ref, i]));
         for (const s of run.judgments.starred) {

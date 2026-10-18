@@ -1,9 +1,10 @@
 import { stat } from "node:fs/promises";
+import { insideDir, isoSeconds } from "job-ledger";
 import { DIGEST_FILES } from "../config.js";
 import { parsePostId } from "../medium/api.js";
 import { raterLine } from "./collect.js";
 import { formatLocal, renderDigest } from "./render.js";
-import { commitState, insideDir, isoSeconds, listRunIds, loadState, readRun, writeRun } from "./state.js";
+import { commitState, loadState, runStore } from "./state.js";
 import type { Judgment, Judgments, Pool, RunFile, RunItem } from "./types.js";
 
 export const DIGEST_MARKER = "===== DIGEST: reply with exactly the text below, nothing before or after =====";
@@ -28,9 +29,9 @@ export function shorten(t: string, n: number): string {
 export class DigestInputError extends Error {}
 
 export async function latestRun(dir: string): Promise<RunFile | null> {
-  const ids = await listRunIds(dir);
+  const ids = await runStore(dir).list();
   const id = ids[ids.length - 1];
-  return id ? readRun<RunFile>(dir, id) : null;
+  return id ? runStore(dir).read(id) : null;
 }
 
 export function isDigestRef(s: string): boolean {
@@ -206,9 +207,9 @@ function sectionName(p: Pool): string {
 
 export async function digestFinish(dir: string, input: FinishInput, opts: { keep: number; now?: () => Date }): Promise<string> {
   const now = opts.now ?? (() => new Date());
-  const run = input.run_id ? await readRun<RunFile>(dir, input.run_id.trim()) : await latestRun(dir);
+  const run = input.run_id ? await runStore(dir).read(input.run_id.trim()) : await latestRun(dir);
   if (!run) {
-    const ids = await listRunIds(dir);
+    const ids = await runStore(dir).list();
     throw new DigestInputError(
       input.run_id
         ? `No digest run "${input.run_id}". Recent runs: ${ids.slice(-5).join(", ") || "none"}. Omit run_id to use the latest.`
@@ -248,7 +249,7 @@ export async function digestFinish(dir: string, input: FinishInput, opts: { keep
     run.committed_at = isoSeconds(now());
     run.judgments = judgments;
     run.commit_summary = summary;
-    await writeRun(dir, run.run_id, run);
+    await runStore(dir).write(run.run_id, run);
     head.push(`STATE SAVED: ${summary}`);
   }
   return [...head, countsLine(run, counts), `WARNINGS: ${warnings.length ? warnings.join(" ") : "none"}`, DIGEST_MARKER, message].join("\n");
@@ -279,14 +280,15 @@ export async function digestStatus(
       (config.classifier ? ` · classifier ${config.classifier}` : "") +
       (config.rankFloor ? ` · rank floor ${Math.round(config.rankFloor * 100)}%${config.rankFloorMode === "exclude" ? " (exclude)" : ""}` : ""),
   );
-  const ids = (await listRunIds(dir)).reverse().slice(0, 5);
+  const runs = runStore(dir);
+  const ids = (await runs.list()).reverse().slice(0, 5);
   if (!ids.length) {
     lines.push("Runs: none yet.");
     return lines.join("\n");
   }
   lines.push("Runs (newest first):");
   for (const id of ids) {
-    const r = await readRun<RunFile>(dir, id);
+    const r = await runs.read(id);
     if (!r) continue;
     const c = r.counts;
     lines.push(
@@ -294,7 +296,7 @@ export async function digestStatus(
         (r.commit_summary ? ` · ${r.commit_summary}` : ""),
     );
   }
-  const latest = await readRun<RunFile>(dir, ids[0]!);
+  const latest = await runs.read(ids[0]!);
   if (latest && !latest.committed_at) {
     const pending = latest.items.filter((i) => i.pool === "following").length;
     lines.push(`Latest run is pending: digest_finish would commit ${pending} Following ids plus the named Top/For you picks, and set last_run to ${latest.started_at}.`);
